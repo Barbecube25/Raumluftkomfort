@@ -531,22 +531,33 @@ export default function App() {
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [notifiedSessions, setNotifiedSessions] = useState(new Set());
-  const [notifyPerm, setNotifyPerm] = useState('default'); // default, granted, denied
+  const [notifyPerm, setNotifyPerm] = useState('default'); 
 
-  // Berechtigungsstatus beim Start prüfen
   useEffect(() => {
     if ('Notification' in window) {
       setNotifyPerm(Notification.permission);
     }
   }, []);
 
-  // Timer-Überwachung für Benachrichtigungen
+  // --- SICHERE BENACHRICHTIGUNG (Android Fix) ---
+  const sendNotification = (title, options) => {
+    try {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.ready.then(registration => {
+          registration.showNotification(title, options);
+        });
+      } else {
+        new Notification(title, options);
+      }
+    } catch (e) {
+      console.error('Notification failed:', e);
+    }
+  };
+
   useEffect(() => {
-    // Nur ausführen wenn erlaubt und echte Daten
     if (notifyPerm !== 'granted' || isDemoMode) return;
 
     rooms.forEach(room => {
-      // Nur prüfen wenn Fenster offen und wir wissen seit wann
       if (!room.windowOpen || !room.lastWindowOpen) return;
 
       const targetMin = getTargetVentilationTime(outside.temp);
@@ -554,18 +565,15 @@ export default function App() {
       const openMin = diffMs / 60000;
       const remaining = targetMin - openMin;
       
-      // Eindeutiger Schlüssel für diese "Lüftungs-Session"
       const sessionKey = `${room.id}-${room.lastWindowOpen}`;
 
-      // Wenn Zeit abgelaufen und für diese Session noch nicht benachrichtigt
       if (remaining <= 0 && !notifiedSessions.has(sessionKey)) {
-         new Notification(`Fenster schließen: ${room.name}`, {
+         sendNotification(`Fenster schließen: ${room.name}`, {
             body: `Die empfohlene Lüftungszeit von ${targetMin} Min. ist abgelaufen.`,
             icon: '/pwa-192x192.png',
-            tag: sessionKey // Verhindert Spam auf Android
+            tag: sessionKey
          });
          
-         // Markiere als "benachrichtigt"
          setNotifiedSessions(prev => new Set(prev).add(sessionKey));
       }
     });
@@ -579,7 +587,7 @@ export default function App() {
     const permission = await Notification.requestPermission();
     setNotifyPerm(permission);
     if (permission === 'granted') {
-      new Notification('Benachrichtigungen aktiviert', {
+      sendNotification('Benachrichtigungen aktiviert', {
         body: 'Du wirst informiert, wenn ein Fenster geschlossen werden muss.',
         icon: '/pwa-192x192.png'
       });
