@@ -21,7 +21,8 @@ import {
   Lock,
   Download,
   Bell,
-  BellOff
+  BellOff,
+  BellRing // Neues Icon für Test
 } from 'lucide-react';
 
 // --- KONFIGURATION FÜR HOME ASSISTANT ---
@@ -541,13 +542,26 @@ export default function App() {
 
   // --- SICHERE BENACHRICHTIGUNG (Android Fix) ---
   const sendNotification = (title, options) => {
+    if (Notification.permission !== 'granted') return;
+    
+    // Optionen für Android optimieren
+    const extendedOptions = {
+        ...options,
+        vibrate: [200, 100, 200], // Vibration hinzufügen
+        requireInteraction: true,  // Bleibt sichtbar
+        badge: '/pwa-192x192.png'
+    };
+
     try {
-      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      if ('serviceWorker' in navigator) {
         navigator.serviceWorker.ready.then(registration => {
-          registration.showNotification(title, options);
+          registration.showNotification(title, extendedOptions);
+        }).catch(err => {
+            console.error('SW Notification failed, trying fallback', err);
+            new Notification(title, extendedOptions);
         });
       } else {
-        new Notification(title, options);
+        new Notification(title, extendedOptions);
       }
     } catch (e) {
       console.error('Notification failed:', e);
@@ -555,7 +569,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (notifyPerm !== 'granted' || isDemoMode) return;
+    if (notifyPerm !== 'granted') return; // Demo Modus Check entfernt, damit man auch da testen kann
 
     rooms.forEach(room => {
       if (!room.windowOpen || !room.lastWindowOpen) return;
@@ -592,6 +606,14 @@ export default function App() {
         icon: '/pwa-192x192.png'
       });
     }
+  };
+
+  // Manuelle Test-Funktion
+  const testNotification = () => {
+    sendNotification('Test-Alarm', {
+      body: 'Dies ist eine Test-Benachrichtigung für dein Dashboard.',
+      icon: '/pwa-192x192.png'
+    });
   };
 
   useEffect(() => {
@@ -633,16 +655,26 @@ export default function App() {
             </div>
             
             <div className="flex gap-2">
-              {/* Notification Toggle */}
-              {'Notification' in window && notifyPerm !== 'granted' && (
-                <button 
-                  onClick={requestNotifications} 
-                  className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700 relative"
-                  title="Benachrichtigungen aktivieren"
-                >
-                  <BellOff size={20} />
-                  <span className="absolute top-2 right-2 w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
-                </button>
+              {/* Notification Toggle & Test */}
+              {'Notification' in window && (
+                notifyPerm === 'granted' ? (
+                  <button 
+                    onClick={testNotification} 
+                    className="bg-emerald-900/50 text-emerald-400 p-3 rounded-full hover:bg-emerald-900 border border-emerald-800"
+                    title="Benachrichtigung testen"
+                  >
+                    <BellRing size={20} />
+                  </button>
+                ) : (
+                  <button 
+                    onClick={requestNotifications} 
+                    className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700 relative"
+                    title="Benachrichtigungen aktivieren"
+                  >
+                    <BellOff size={20} />
+                    <span className="absolute top-2 right-2 w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
+                  </button>
+                )
               )}
               
               {installPrompt && (
