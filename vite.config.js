@@ -7,7 +7,8 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+      // Nur favicon.ico behalten, Apple-Icons entfernt für reinen Android-Fokus
+      includeAssets: ['favicon.ico'],
       manifest: {
         name: 'Raumluftkomfort',
         short_name: 'Klima',
