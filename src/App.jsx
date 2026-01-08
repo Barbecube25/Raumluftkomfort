@@ -44,8 +44,8 @@ const SENSOR_MAPPING = {
     window: 'binary_sensor.terrassentur_tur' 
   },
   kitchen: { 
-    temp: 'sensor.kuchensensor_temperatur', 
-    humidity: 'sensor.kuchensensor_luftfeuchtigkeit', 
+    temp: 'sensor.indoor_aussentemperatur_temperature', 
+    humidity: 'sensor.indoor_aussentemperatur_humidity', 
     window: 'binary_sensor.kuchenfenster_tur' 
   },
   bedroom: { 
