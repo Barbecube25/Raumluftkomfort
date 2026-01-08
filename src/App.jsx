@@ -18,7 +18,8 @@ import {
   Timer,
   Fan,
   AlertTriangle,
-  Lock
+  Lock,
+  Download // Neues Icon für Installation
 } from 'lucide-react';
 
 // --- KONFIGURATION FÜR HOME ASSISTANT ---
@@ -49,7 +50,6 @@ const SENSOR_MAPPING = {
   },
   kitchen: { 
     temp: 'sensor.indoor_aussentemperatur_temperature', 
-    // NEU: Feuchtigkeitssensor hinzugefügt
     humidity: 'sensor.indoor_aussentemperatur_humidity', 
     window: 'binary_sensor.kuchenfenster_tur' 
   },
@@ -640,6 +640,30 @@ export default function App() {
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [showWindowModal, setShowWindowModal] = useState(false);
   const [filter, setFilter] = useState('all'); 
+  const [installPrompt, setInstallPrompt] = useState(null);
+
+  // Install-Event Listener
+  useEffect(() => {
+    const handleInstallPrompt = (e) => {
+      // Browser-Standard verhindern
+      e.preventDefault();
+      // Event für später speichern
+      setInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    // Zeige den Installations-Dialog
+    installPrompt.prompt();
+    // Warte auf Entscheidung
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setInstallPrompt(null);
+    }
+  };
 
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
   const openWindows = rooms.filter(r => r.windowOpen).length;
@@ -668,6 +692,16 @@ export default function App() {
           </div>
           
           <div className="flex gap-2">
+            {installPrompt && (
+              <button 
+                onClick={handleInstallClick}
+                className="bg-green-600 text-white px-4 py-2 rounded-2xl hover:bg-green-700 transition-colors active:scale-95 flex items-center gap-2 font-medium shadow-md animate-in fade-in slide-in-from-right-2"
+              >
+                <Download size={18} />
+                App installieren
+              </button>
+            )}
+            
             {connectionStatus === 'error' && (
               <button 
                 onClick={enableDemoMode}
