@@ -19,7 +19,9 @@ import {
   Fan,
   AlertTriangle,
   Lock,
-  Download
+  Download,
+  Bell,
+  BellOff
 } from 'lucide-react';
 
 // --- KONFIGURATION FÜR HOME ASSISTANT ---
@@ -44,8 +46,8 @@ const SENSOR_MAPPING = {
     window: 'binary_sensor.terrassentur_tur' 
   },
   kitchen: { 
-    temp: 'sensor.indoor_aussentemperatur_temperature', 
-    humidity: 'sensor.indoor_aussentemperatur_humidity', 
+    temp: 'sensor.kuchensensor_temperatur', 
+    humidity: 'sensor.kuchensensor_luftfeuchtigkeit', 
     window: 'binary_sensor.kuchenfenster_tur' 
   },
   bedroom: { 
@@ -108,6 +110,8 @@ const OUTSIDE_DATA = {
   condition: 'Cloudy'
 };
 
+// --- LOGIK & ALGORITHMEN ---
+
 const calculateDewPoint = (T, RH) => {
   if (!T || !RH) return 0;
   const a = 17.27;
@@ -116,19 +120,22 @@ const calculateDewPoint = (T, RH) => {
   return (b * alpha) / (a - alpha);
 };
 
+// Berechnet die optimale Lüftungsdauer in Minuten
+const getTargetVentilationTime = (outsideTemp) => {
+  if (outsideTemp < 5) return 5;
+  if (outsideTemp < 10) return 10;
+  if (outsideTemp < 20) return 20;
+  return 30;
+};
+
 const analyzeRoom = (room, outside) => {
   const limits = COMFORT_RANGES[room.type] || COMFORT_RANGES.default;
   let score = 100;
   let issues = [];
   let recommendations = [];
 
-  let targetMin = 20;
-  let ventDurationText = '20 Min';
-  
-  if (outside.temp < 5) { targetMin = 5; ventDurationText = '5-10 Min'; }
-  else if (outside.temp < 10) { targetMin = 10; ventDurationText = '10-15 Min'; }
-  else if (outside.temp < 20) { targetMin = 20; ventDurationText = '15-20 Min'; }
-  else { targetMin = 30; ventDurationText = '> 25 Min'; }
+  const targetMin = getTargetVentilationTime(outside.temp);
+  const ventDurationText = `${targetMin} Min`;
 
   if (room.temp < limits.tempMin) {
     score -= 20;
@@ -368,7 +375,6 @@ const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary' }) =
 const RoomCardM3 = ({ room, outsideData, onClick }) => {
   const analysis = useMemo(() => analyzeRoom(room, outsideData), [room, outsideData]);
   
-  // Dunkle Theme Logik
   let containerClass = "bg-slate-800 border-slate-700";
   let scoreBadgeClass = "bg-emerald-900/50 text-emerald-400 border border-emerald-800";
   
@@ -524,6 +530,61 @@ export default function App() {
   const { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh, enableDemoMode } = useHomeAssistant();
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [notifiedSessions, setNotifiedSessions] = useState(new Set());
+  const [notifyPerm, setNotifyPerm] = useState('default'); // default, granted, denied
+
+  // Berechtigungsstatus beim Start prüfen
+  useEffect(() => {
+    if ('Notification' in window) {
+      setNotifyPerm(Notification.permission);
+    }
+  }, []);
+
+  // Timer-Überwachung für Benachrichtigungen
+  useEffect(() => {
+    // Nur ausführen wenn erlaubt und echte Daten
+    if (notifyPerm !== 'granted' || isDemoMode) return;
+
+    rooms.forEach(room => {
+      // Nur prüfen wenn Fenster offen und wir wissen seit wann
+      if (!room.windowOpen || !room.lastWindowOpen) return;
+
+      const targetMin = getTargetVentilationTime(outside.temp);
+      const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
+      const openMin = diffMs / 60000;
+      const remaining = targetMin - openMin;
+      
+      // Eindeutiger Schlüssel für diese "Lüftungs-Session"
+      const sessionKey = `${room.id}-${room.lastWindowOpen}`;
+
+      // Wenn Zeit abgelaufen und für diese Session noch nicht benachrichtigt
+      if (remaining <= 0 && !notifiedSessions.has(sessionKey)) {
+         new Notification(`Fenster schließen: ${room.name}`, {
+            body: `Die empfohlene Lüftungszeit von ${targetMin} Min. ist abgelaufen.`,
+            icon: '/pwa-192x192.png',
+            tag: sessionKey // Verhindert Spam auf Android
+         });
+         
+         // Markiere als "benachrichtigt"
+         setNotifiedSessions(prev => new Set(prev).add(sessionKey));
+      }
+    });
+  }, [rooms, outside, notifiedSessions, notifyPerm, isDemoMode]);
+
+  const requestNotifications = async () => {
+    if (!('Notification' in window)) {
+      alert('Dieser Browser unterstützt keine Benachrichtigungen.');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotifyPerm(permission);
+    if (permission === 'granted') {
+      new Notification('Benachrichtigungen aktiviert', {
+        body: 'Du wirst informiert, wenn ein Fenster geschlossen werden muss.',
+        icon: '/pwa-192x192.png'
+      });
+    }
+  };
 
   useEffect(() => {
     const handleInstallPrompt = (e) => {
@@ -564,6 +625,18 @@ export default function App() {
             </div>
             
             <div className="flex gap-2">
+              {/* Notification Toggle */}
+              {'Notification' in window && notifyPerm !== 'granted' && (
+                <button 
+                  onClick={requestNotifications} 
+                  className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700 relative"
+                  title="Benachrichtigungen aktivieren"
+                >
+                  <BellOff size={20} />
+                  <span className="absolute top-2 right-2 w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
+                </button>
+              )}
+              
               {installPrompt && (
                 <button onClick={handleInstallClick} className="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-500 shadow-lg shadow-blue-900/20">
                   <Download size={20} />
