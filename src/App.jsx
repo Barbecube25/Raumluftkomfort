@@ -50,7 +50,7 @@ const SENSOR_MAPPING = {
     window: 'binary_sensor.terrassentur_tur' 
   },
   kitchen: { 
-    temp: 'sensor.kuche_temperatur', 
+    temp: 'sensor.kuchensensor_temperatur', 
     window: 'binary_sensor.kuchenfenster_tur' 
   },
   bedroom: { 
