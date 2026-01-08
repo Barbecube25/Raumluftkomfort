@@ -16,7 +16,8 @@ import {
   Wifi,
   WifiOff,
   Timer,
-  Fan
+  Fan,
+  AlertTriangle
 } from 'lucide-react';
 
 // --- KONFIGURATION FÜR HOME ASSISTANT ---
@@ -109,7 +110,6 @@ const INITIAL_ROOMS = [
   { id: 'play', name: 'Spielzimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.0, humidity: 48, co2: null, windowOpen: null, lastWindowOpen: null },
   // Bad: mit Lüftung
   { id: 'bath', name: 'Bad', type: 'bathroom', hasCo2: false, hasWindow: true, hasVentilation: true, temp: 23.5, humidity: 82, co2: null, windowOpen: false, lastWindowOpen: null },
-  { id: 'hallway', name: 'Flur', type: 'default', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 19.5, humidity: 45, co2: null, windowOpen: null, lastWindowOpen: null },
   { id: 'dining', name: 'Esszimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.2, humidity: 46, co2: null, windowOpen: null, lastWindowOpen: null },
   { id: 'basement', name: 'Keller', type: 'storage', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 14.0, humidity: 60, co2: null, windowOpen: false, lastWindowOpen: null },
 ];
@@ -250,9 +250,11 @@ const useHomeAssistant = () => {
   const [outside, setOutside] = useState(OUTSIDE_DATA);
   const [isDemoMode, setIsDemoMode] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('connected');
+  const [errorMessage, setErrorMessage] = useState('');
   const [lastUpdate, setLastUpdate] = useState(new Date());
 
   const fetchData = async () => {
+    // Wenn keine Credentials da sind, direkt Demo Modus
     if (!HA_URL || !HA_TOKEN) {
       setIsDemoMode(true);
       simulateDataChange();
@@ -262,6 +264,7 @@ const useHomeAssistant = () => {
     try {
       setIsDemoMode(false);
       setConnectionStatus('loading');
+      setErrorMessage('');
       
       const response = await fetch(`${HA_URL}/api/states`, {
         headers: {
@@ -270,7 +273,9 @@ const useHomeAssistant = () => {
         },
       });
 
-      if (!response.ok) throw new Error('Network response was not ok');
+      if (!response.ok) {
+        throw new Error(`HTTP Fehler: ${response.status} ${response.statusText}`);
+      }
       
       const states = await response.json();
       setConnectionStatus('connected');
@@ -318,6 +323,7 @@ const useHomeAssistant = () => {
     } catch (error) {
       console.error("HA Fetch Error:", error);
       setConnectionStatus('error');
+      setErrorMessage(error.message || 'Verbindungsfehler (CORS?)');
     }
   };
 
@@ -335,13 +341,19 @@ const useHomeAssistant = () => {
     }));
   };
 
+  const enableDemoMode = () => {
+      setIsDemoMode(true);
+      setConnectionStatus('connected');
+      simulateDataChange();
+  };
+
   useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 10000); // 10s Polling
     return () => clearInterval(interval);
   }, []);
 
-  return { rooms, outside, isDemoMode, connectionStatus, refresh: fetchData };
+  return { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh: fetchData, enableDemoMode };
 };
 
 // --- COMPONENTS ---
@@ -617,7 +629,7 @@ const WindowListModal = ({ rooms, onClose }) => {
 };
 
 export default function App() {
-  const { rooms, outside, isDemoMode, connectionStatus, refresh } = useHomeAssistant();
+  const { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh, enableDemoMode } = useHomeAssistant();
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [showWindowModal, setShowWindowModal] = useState(false);
   const [filter, setFilter] = useState('all'); 
@@ -641,20 +653,46 @@ export default function App() {
                  <span className="flex items-center gap-1 bg-gray-200 px-2 py-0.5 rounded text-gray-700"><WifiOff size={12}/> Demo Modus</span>
                ) : (
                  <span className={`flex items-center gap-1 px-2 py-0.5 rounded ${connectionStatus === 'error' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                   <Wifi size={12}/> {connectionStatus === 'connected' ? 'Verbunden' : 'Verbindungsfehler'}
+                   {connectionStatus === 'error' ? <AlertTriangle size={12}/> : <Wifi size={12}/>} 
+                   {connectionStatus === 'connected' ? 'Verbunden' : 'Verbindungsfehler'}
                  </span>
                )}
             </div>
           </div>
           
-          <button 
-             onClick={refresh}
-             className="bg-blue-100 text-blue-900 p-4 rounded-2xl hover:bg-blue-200 transition-colors active:scale-95 flex items-center justify-center"
-             title="Aktualisieren"
-          >
-             <RefreshCw size={24} className={connectionStatus === 'loading' ? 'animate-spin' : ''}/>
-          </button>
+          <div className="flex gap-2">
+            {connectionStatus === 'error' && (
+              <button 
+                onClick={enableDemoMode}
+                className="bg-yellow-100 text-yellow-900 p-4 rounded-2xl hover:bg-yellow-200 transition-colors active:scale-95 flex items-center gap-2 font-medium text-sm"
+              >
+                In Demo-Modus wechseln
+              </button>
+            )}
+            <button 
+              onClick={refresh}
+              className="bg-blue-100 text-blue-900 p-4 rounded-2xl hover:bg-blue-200 transition-colors active:scale-95 flex items-center justify-center"
+              title="Aktualisieren"
+            >
+              <RefreshCw size={24} className={connectionStatus === 'loading' ? 'animate-spin' : ''}/>
+            </button>
+          </div>
         </header>
+
+        {connectionStatus === 'error' && errorMessage && (
+          <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3 text-red-800 animate-in fade-in slide-in-from-top-2">
+             <AlertTriangle className="shrink-0 mt-0.5"/>
+             <div>
+               <h3 className="font-bold">Verbindung zu Home Assistant fehlgeschlagen</h3>
+               <p className="text-sm mt-1 mb-2">{errorMessage}</p>
+               <div className="text-xs bg-white/50 p-2 rounded-lg">
+                 <strong>Tipp:</strong> In dieser Vorschau funktionieren direkte Verbindungen oft nicht (CORS/HTTPS). 
+                 Nutze den "Demo-Modus" Button oben, um das Design zu testen. 
+                 Echte Daten funktionieren später, wenn du die App auf Vercel oder lokal hostest.
+               </div>
+             </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <M3StatCard 
