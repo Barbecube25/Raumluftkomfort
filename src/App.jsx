@@ -17,13 +17,13 @@ import {
   WifiOff,
   Timer,
   Fan,
-  AlertTriangle
+  AlertTriangle,
+  Lock
 } from 'lucide-react';
 
 // --- KONFIGURATION FÜR HOME ASSISTANT ---
 
 // Helper für sicheren Zugriff auf Environment Variables
-// Verhindert Abstürze in Umgebungen, die import.meta nicht unterstützen
 const getEnv = () => {
   try {
     return (import.meta && import.meta.env) ? import.meta.env : {};
@@ -34,15 +34,12 @@ const getEnv = () => {
 const env = getEnv();
 
 // 1. URL: Wird später über Vercel (Environment Variables) gesetzt
-// Variable Name in Vercel: VITE_HA_URL
 const HA_URL = env.VITE_HA_URL || ""; 
 
 // 2. Token: Wird später über Vercel gesetzt
-// Variable Name in Vercel: VITE_HA_TOKEN
 const HA_TOKEN = env.VITE_HA_TOKEN || "";
 
 // 3. Mapping: Hier verknüpfst du die App-IDs mit deinen echten Sensor-Namen aus Home Assistant
-// TODO: Tausche die Namen rechts gegen deine echten Entitäts-Namen aus Home Assistant aus!
 const SENSOR_MAPPING = {
   living: { 
     temp: 'sensor.smart_radiator_thermostat_x_temperatur', 
@@ -51,7 +48,9 @@ const SENSOR_MAPPING = {
     window: 'binary_sensor.terrassentur_tur' 
   },
   kitchen: { 
-    temp: 'sensor.kuchensensor_temperatur', 
+    temp: 'sensor.indoor_aussentemperatur_temperature', 
+    // NEU: Feuchtigkeitssensor hinzugefügt
+    humidity: 'sensor.indoor_aussentemperatur_humidity', 
     window: 'binary_sensor.kuchenfenster_tur' 
   },
   bedroom: { 
@@ -103,12 +102,9 @@ const COMFORT_RANGES = {
 const INITIAL_ROOMS = [
   { id: 'living', name: 'Wohnzimmer', type: 'living', hasCo2: true, hasWindow: true, hasVentilation: false, temp: 21.5, humidity: 45, co2: 650, windowOpen: false, lastWindowOpen: null },
   { id: 'kitchen', name: 'Küche', type: 'living', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 22.1, humidity: 68, co2: null, windowOpen: true, lastWindowOpen: new Date(Date.now() - 1000 * 60 * 5).toISOString() }, 
-  // Schlafzimmer: mit Lüftung
   { id: 'bedroom', name: 'Schlafzimmer', type: 'sleeping', hasCo2: true, hasWindow: true, hasVentilation: true, temp: 18.0, humidity: 50, co2: 900, windowOpen: false, lastWindowOpen: null },
-  // Kinderzimmer: mit Lüftung
   { id: 'kids', name: 'Kinderzimmer', type: 'sleeping', hasCo2: false, hasWindow: true, hasVentilation: true, temp: 20.5, humidity: 55, co2: null, windowOpen: false, lastWindowOpen: null },
   { id: 'play', name: 'Spielzimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.0, humidity: 48, co2: null, windowOpen: null, lastWindowOpen: null },
-  // Bad: mit Lüftung
   { id: 'bath', name: 'Bad', type: 'bathroom', hasCo2: false, hasWindow: true, hasVentilation: true, temp: 23.5, humidity: 82, co2: null, windowOpen: false, lastWindowOpen: null },
   { id: 'dining', name: 'Esszimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.2, humidity: 46, co2: null, windowOpen: null, lastWindowOpen: null },
   { id: 'basement', name: 'Keller', type: 'storage', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 14.0, humidity: 60, co2: null, windowOpen: false, lastWindowOpen: null },
@@ -137,7 +133,6 @@ const analyzeRoom = (room, outside) => {
   let issues = [];
   let recommendations = [];
 
-  // 1. Ziel-Lüftungsdauer berechnen
   let targetMin = 20;
   let ventDurationText = '20 Min';
   
@@ -146,7 +141,6 @@ const analyzeRoom = (room, outside) => {
   else if (outside.temp < 20) { targetMin = 20; ventDurationText = '15-20 Min'; }
   else { targetMin = 30; ventDurationText = '> 25 Min'; }
 
-  // 2. Temperatur Check
   if (room.temp < limits.tempMin) {
     score -= 20;
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
@@ -157,7 +151,6 @@ const analyzeRoom = (room, outside) => {
     recommendations.push('Heizung runterdrehen');
   }
 
-  // 3. Feuchtigkeits Check & Lüftungstimer
   const dewPointInside = calculateDewPoint(room.temp, room.humidity);
   const dewPointOutside = calculateDewPoint(outside.temp, outside.humidity);
 
@@ -191,7 +184,6 @@ const analyzeRoom = (room, outside) => {
     }
   }
 
-  // 4. CO2 Check & Timer
   if (room.hasCo2 && room.co2) {
     if (room.co2 > 1000) {
        const isCrit = room.co2 >= 1500;
@@ -261,6 +253,16 @@ const useHomeAssistant = () => {
       return;
     }
 
+    // SICHERHEITSCHECK: Mixed Content
+    const isAppHttps = window.location.protocol === 'https:';
+    const isHaHttp = HA_URL.startsWith('http://');
+    
+    if (isAppHttps && isHaHttp) {
+        setConnectionStatus('error');
+        setErrorMessage('Sicherheitsblockade: Die App läuft auf HTTPS, aber Home Assistant auf HTTP. Der Browser blockiert diese unsichere Verbindung ("Mixed Content"). Bitte nutze die Nabu Casa URL (https) oder SSL.');
+        return;
+    }
+
     try {
       setIsDemoMode(false);
       setConnectionStatus('loading');
@@ -323,7 +325,12 @@ const useHomeAssistant = () => {
     } catch (error) {
       console.error("HA Fetch Error:", error);
       setConnectionStatus('error');
-      setErrorMessage(error.message || 'Verbindungsfehler (CORS?)');
+      
+      let userMsg = error.message;
+      if (error.message.includes('Failed to fetch')) {
+          userMsg = 'Netzwerkfehler (CORS Blockade). Die App darf nicht auf Home Assistant zugreifen. Bitte prüfe die "cors_allowed_origins" in der configuration.yaml.';
+      }
+      setErrorMessage(userMsg);
     }
   };
 
@@ -349,7 +356,7 @@ const useHomeAssistant = () => {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000); // 10s Polling
+    const interval = setInterval(fetchData, 10000); 
     return () => clearInterval(interval);
   }, []);
 
@@ -681,11 +688,13 @@ export default function App() {
 
         {connectionStatus === 'error' && errorMessage && (
           <div className="mb-8 p-4 bg-red-50 border border-red-200 rounded-2xl flex items-start gap-3 text-red-800 animate-in fade-in slide-in-from-top-2">
-             <AlertTriangle className="shrink-0 mt-0.5"/>
+             <div className="bg-red-100 p-2 rounded-full shrink-0 mt-0.5">
+               {errorMessage.includes('Sicherheitsblockade') ? <Lock size={20}/> : <AlertTriangle size={20}/>}
+             </div>
              <div>
                <h3 className="font-bold">Verbindung zu Home Assistant fehlgeschlagen</h3>
                <p className="text-sm mt-1 mb-2">{errorMessage}</p>
-               <div className="text-xs bg-white/50 p-2 rounded-lg">
+               <div className="text-xs bg-white/50 p-3 rounded-lg border border-red-100/50">
                  <strong>Tipp:</strong> In dieser Vorschau funktionieren direkte Verbindungen oft nicht (CORS/HTTPS). 
                  Nutze den "Demo-Modus" Button oben, um das Design zu testen. 
                  Echte Daten funktionieren später, wenn du die App auf Vercel oder lokal hostest.
