@@ -28,7 +28,7 @@ import {
   Minus,
   Plus,
   ListChecks,
-  Wind as AirFlow // Alias für Icon
+  Wind as AirFlow 
 } from 'lucide-react';
 
 // --- KONFIGURATION & UMGEBUNGSVARIABLEN ---
@@ -45,7 +45,6 @@ const env = getEnv();
 const HA_URL = env.VITE_HA_URL || ""; 
 const HA_TOKEN = env.VITE_HA_TOKEN || "";
 
-// Mapping für Heizungsthermostate
 const CLIMATE_MAPPING = {
   living: 'climate.thermostat_x_wohnzimmer', 
   bedroom: 'climate.thermostat_x_schlafzimmer',
@@ -57,16 +56,15 @@ const CLIMATE_MAPPING = {
   basement: ''
 };
 
-// Raum-Verbindungen (Erweitert für Sog-Wirkung Wohnzimmer <-> Bad)
 const ROOM_CONNECTIONS = {
-  living: ['dining', 'bath'], // Bad hinzugefügt für Sog-Effekt (via Esszimmer)
-  kitchen: ['dining', 'bath'], // Bad hinzugefügt für Sog-Effekt
+  living: ['dining', 'bath'], 
+  kitchen: ['dining', 'bath'], 
   dining: ['living', 'kitchen', 'bath'],
   hallway: ['bedroom', 'play'], 
   bedroom: ['hallway'],
   kids: ['play'],
   play: ['kids', 'hallway'],
-  bath: ['dining', 'living', 'kitchen'], // Rückverbindung zur Küche
+  bath: ['dining', 'living', 'kitchen'], 
   basement: [] 
 };
 
@@ -171,7 +169,8 @@ const formatTimeAgo = (dateString) => {
   return '>1d';
 };
 
-const analyzeRoom = (room, outside, settings, allRooms) => {
+// Analyse mit Querlüftungs-Logik UND Timer-Extensions
+const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
   const limits = settings[room.type] || settings.default;
   let score = 100;
   let issues = [];
@@ -179,13 +178,13 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
 
   const neighbors = ROOM_CONNECTIONS[room.id] || [];
   
-  // 1. Check auf Querlüftung (Offenes Fenster beim Nachbarn)
+  // 1. Check auf Querlüftung
   const crossVentilationRoom = neighbors.find(nId => {
     const neighbor = allRooms.find(r => r.id === nId);
     return neighbor && neighbor.windowOpen;
   });
   
-  // 2. NEU: Check auf Lüftungsanlage beim Nachbarn (Sog-Effekt)
+  // 2. Check auf Lüftungsanlage beim Nachbarn
   const ventilationNeighborId = neighbors.find(nId => {
     const neighbor = allRooms.find(r => r.id === nId);
     return neighbor && neighbor.hasVentilation;
@@ -194,10 +193,16 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
   
   const isCrossVentilating = room.windowOpen && !!crossVentilationRoom;
   
+  // Basis-Zeit berechnen
   let targetMin = getTargetVentilationTime(outside.temp);
   if (isCrossVentilating) targetMin = Math.ceil(targetMin / 2);
   
-  const ventDurationText = `${targetMin} Min`;
+  // NEU: Addierte Verlängerung aus dem State
+  const sessionKey = `${room.id}-${room.lastWindowOpen}`;
+  const extensionMin = extensions[sessionKey] || 0;
+  const totalTargetMin = targetMin + extensionMin;
+  
+  const ventDurationText = `${totalTargetMin} Min`;
 
   // Temp Check
   if (room.temp < limits.tempMin) {
@@ -226,7 +231,7 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
       if (room.windowOpen && room.lastWindowOpen) {
           const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
           const openMin = diffMs / 60000;
-          const remaining = Math.ceil(targetMin - openMin);
+          const remaining = Math.ceil(totalTargetMin - openMin);
           
           if (remaining > 0) {
              if (isCrossVentilating) {
@@ -242,20 +247,21 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
                     const nName = allRooms.find(r => r.id === potentialCross)?.name;
                     recommendations.push(`Tipp: Fenster in ${nName} öffnen für Durchzug!`);
                 }
-                // NEU: Tipp für Sog-Lüftung
+                // Tipp für Sog-Lüftung
                 if (ventilationNeighbor) {
                     recommendations.push(`Sogwirkung: Lüftung in ${ventilationNeighbor.name} an (Fenster dort zu)`);
                 }
              }
           } else {
-             recommendations.push(`Fenster schließen.`);
+             // Wenn wir hier sind, ist die Zeit abgelaufen. 
+             // Die Entscheidung über Verlängerung passiert im Effekt, hier zeigen wir nur Status.
+             recommendations.push(`Zeit abgelaufen. Prüfe Werte...`); 
           }
       } else {
           recommendations.push(`Lüften: ${ventDurationText}`);
           if (room.hasVentilation) {
             recommendations.push('Falls möglich: Lüftung prüfen');
           } else if (ventilationNeighbor) {
-            // NEU: Empfehlung auch wenn Fenster noch zu ist
             recommendations.push(`Effektiv: Fenster auf + Lüftung in ${ventilationNeighbor.name} an`);
           }
       }
@@ -274,12 +280,12 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
        if (room.windowOpen && room.lastWindowOpen) {
           const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
           const openMin = diffMs / 60000;
-          const remaining = Math.ceil(targetMin - openMin);
+          const remaining = Math.ceil(totalTargetMin - openMin);
           
           if (remaining > 0) {
              recommendations.push(`CO2: Noch ${remaining} Min.`);
           } else {
-             recommendations.push(`Luft gut. Schließen.`);
+             recommendations.push(`Zeit abgelaufen. Prüfe Werte...`);
           }
        } else {
           recommendations.push(isCrit ? `Sofort öffnen! (${ventDurationText})` : `Stoßlüften (${ventDurationText})`);
@@ -300,7 +306,8 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
     issues,
     recommendations,
     dewPoint: dewPointInside.toFixed(1),
-    isCrossVentilating
+    isCrossVentilating,
+    totalTargetMin // Return for external use
   };
 };
 
@@ -583,8 +590,8 @@ const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onC
   );
 };
 
-const RoomCardM3 = ({ room, outsideData, settings, allRooms, onClick }) => {
-  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms), [room, outsideData, settings, allRooms]);
+const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, onClick }) => {
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
   let containerClass = "bg-slate-800 border-slate-700";
   let scoreBadgeClass = "bg-emerald-900/50 text-emerald-400 border border-emerald-800";
   if (analysis.score < 80) { containerClass = "bg-slate-800 border-yellow-900/50 shadow-[0_0_15px_rgba(234,179,8,0.1)]"; scoreBadgeClass = "bg-yellow-900/50 text-yellow-400 border border-yellow-800"; }
@@ -618,9 +625,9 @@ const RoomCardM3 = ({ room, outsideData, settings, allRooms, onClick }) => {
   );
 };
 
-const M3Modal = ({ room, outsideData, settings, allRooms, onClose }) => {
+const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose }) => {
   if (!room) return null;
-  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms), [room, outsideData, settings, allRooms]);
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
   const limits = settings[room.type] || settings.default;
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -653,17 +660,17 @@ const M3Modal = ({ room, outsideData, settings, allRooms, onClose }) => {
   );
 };
 
-const SummaryModal = ({ rooms, outside, settings, onClose }) => {
+const SummaryModal = ({ rooms, outside, settings, extensions, onClose }) => {
   const roomsWithActions = useMemo(() => {
     return rooms.map(room => {
-      const analysis = analyzeRoom(room, outside, settings, rooms);
+      const analysis = analyzeRoom(room, outside, settings, rooms, extensions);
       return {
         ...room,
         recommendations: analysis.recommendations,
         issues: analysis.issues
       };
     }).filter(r => r.recommendations.length > 0);
-  }, [rooms, outside, settings]);
+  }, [rooms, outside, settings, extensions]);
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -728,6 +735,7 @@ export default function App() {
   
   const [notifiedSessions, setNotifiedSessions] = useState(new Set());
   const [notifyPerm, setNotifyPerm] = useState('default');
+  const [timerExtensions, setTimerExtensions] = useState({}); // Stores extension minutes per session
 
   const [comfortSettings, setComfortSettings] = useState(() => {
     const saved = localStorage.getItem('comfortSettings');
@@ -774,11 +782,6 @@ export default function App() {
           return e && !isNaN(e.state) ? parseFloat(e.state) : null;
         };
 
-        const getAttr = (id, attr) => {
-          const e = states.find(s => s.entity_id === id);
-          return e ? e.attributes[attr] : null;
-        };
-
         if (SENSOR_MAPPING.outside) {
           setOutside({
             temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
@@ -803,8 +806,8 @@ export default function App() {
 
           let targetTemp = room.targetTemp;
           if (climateEntity) {
-             const t = getAttr(climateEntity, 'temperature');
-             if (t) targetTemp = t;
+             const e = states.find(s => s.entity_id === climateEntity);
+             if (e) targetTemp = e.attributes.temperature;
           }
 
           return {
@@ -867,7 +870,7 @@ export default function App() {
       if (!room.windowOpen || !room.lastWindowOpen) return;
 
       const limits = comfortSettings[room.type] || comfortSettings.default;
-      const analysis = analyzeRoom(room, outside, comfortSettings, rooms); 
+      const analysis = analyzeRoom(room, outside, comfortSettings, rooms, timerExtensions); 
       const targetMin = getTargetVentilationTime(outside.temp);
       const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
       const openMin = diffMs / 60000;
@@ -875,17 +878,19 @@ export default function App() {
       let adjustedTarget = targetMin;
       if (analysis.isCrossVentilating) adjustedTarget = Math.ceil(targetMin / 2);
       
-      const remaining = adjustedTarget - openMin;
-      
       const sessionBase = `${room.id}-${room.lastWindowOpen}`;
+      const extensionMin = timerExtensions[sessionBase] || 0;
+      const totalTargetMin = adjustedTarget + extensionMin;
+      const remaining = totalTargetMin - openMin;
+      
       const startKey = `${sessionBase}-start`;
       const coldKey = `${sessionBase}-cold`;
-      const timerKey = `${sessionBase}-timer`;
+      const timerKey = `${sessionBase}-timer`; // Base timer key
       const qualityKey = `${sessionBase}-quality`;
 
       if (!notifiedSessions.has(startKey)) {
          sendNotification(`Lüftung gestartet: ${room.name}`, {
-            body: `Timer gesetzt auf ${adjustedTarget} Minuten.${analysis.isCrossVentilating ? ' (Querlüften aktiv)' : ''}`,
+            body: `Timer gesetzt auf ${totalTargetMin} Minuten.${analysis.isCrossVentilating ? ' (Querlüften aktiv)' : ''}`,
             tag: startKey
          });
          setNotifiedSessions(prev => new Set(prev).add(startKey));
@@ -900,17 +905,44 @@ export default function App() {
          setNotifiedSessions(prev => new Set(prev).add(coldKey));
       }
 
-      if (remaining <= 0 && !notifiedSessions.has(timerKey)) {
-         sendNotification(`Fenster schließen: ${room.name}`, {
-            body: `Zeit abgelaufen (${adjustedTarget} Min).`,
-            tag: timerKey
-         });
-         setNotifiedSessions(prev => new Set(prev).add(timerKey));
+      // Timer Logic with Auto-Extension
+      if (remaining <= 0) {
+          // Check if air quality is bad
+          const hasIssues = analysis.issues.some(i => (i.type === 'hum' && i.status === 'high') || i.type === 'co2');
+          
+          if (hasIssues && extensionMin < 30) {
+               // EXTEND TIMER
+               const newExtension = extensionMin + 5;
+               const extensionKey = `${sessionBase}-ext-${newExtension}`;
+               
+               // Avoid re-triggering same extension (if update is slow)
+               // Using notifiedSessions to track extensions by key
+               if (!notifiedSessions.has(extensionKey)) {
+                   setTimerExtensions(prev => ({...prev, [sessionBase]: newExtension}));
+                   setNotifiedSessions(prev => new Set(prev).add(extensionKey));
+                   
+                   sendNotification(`Luft noch nicht gut: ${room.name}`, {
+                        body: `Timer um 5 Minuten verlängert.`,
+                        tag: extensionKey
+                   });
+               }
+          } else {
+               // TIME UP (Good air OR max extension reached)
+               // Use specific key for the 'final' notification to avoid spamming
+               const finalKey = `${sessionBase}-final-${totalTargetMin}`;
+               
+               if (!notifiedSessions.has(finalKey)) {
+                   sendNotification(`Fenster schließen: ${room.name}`, {
+                        body: `Zeit abgelaufen (${totalTargetMin} Min).`,
+                        tag: finalKey
+                   });
+                   setNotifiedSessions(prev => new Set(prev).add(finalKey));
+               }
+          }
       }
 
-      const issues = analysis.issues;
-      const hasIssues = issues.some(i => i.type === 'hum' && i.status === 'high' || i.type === 'co2');
-      
+      // Early finish check (Good air before timer ends)
+      const hasIssues = analysis.issues.some(i => i.type === 'hum' && i.status === 'high' || i.type === 'co2');
       if (!hasIssues && openMin > 2 && !notifiedSessions.has(qualityKey)) {
          sendNotification(`Luft gut: ${room.name}`, {
             body: `Werte sind im grünen Bereich.`,
@@ -919,8 +951,9 @@ export default function App() {
          setNotifiedSessions(prev => new Set(prev).add(qualityKey));
       }
     });
-  }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings]);
+  }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings, timerExtensions]);
 
+  // Install Prompt Logic
   useEffect(() => {
     const handler = (e) => { e.preventDefault(); setInstallPrompt(e); };
     window.addEventListener('beforeinstallprompt', handler);
@@ -952,7 +985,7 @@ export default function App() {
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
   const openWindows = rooms.filter(r => r.windowOpen).length;
   // Gesamtstatus Berechnung
-  const avgScore = Math.round(rooms.reduce((acc, r) => acc + analyzeRoom(r, outside, comfortSettings, rooms).score, 0) / rooms.length);
+  const avgScore = Math.round(rooms.reduce((acc, r) => acc + analyzeRoom(r, outside, comfortSettings, rooms, timerExtensions).score, 0) / rooms.length);
   let statusText = "Gut";
   let statusColorClass = "bg-emerald-900/20 text-emerald-400 border border-emerald-900/30";
   if (avgScore < 80) { statusText = "Okay"; statusColorClass = "bg-yellow-900/20 text-yellow-400 border border-yellow-900/30"; }
@@ -1064,6 +1097,7 @@ export default function App() {
               outsideData={outside}
               settings={comfortSettings}
               allRooms={rooms}
+              extensions={timerExtensions}
               onClick={() => setSelectedRoom(room)}
             />
           ))}
@@ -1076,6 +1110,7 @@ export default function App() {
             outsideData={outside}
             settings={comfortSettings}
             allRooms={rooms}
+            extensions={timerExtensions}
             onClose={() => setSelectedRoom(null)}
           />
         )}
@@ -1108,6 +1143,7 @@ export default function App() {
             rooms={rooms} 
             outside={outside} 
             settings={comfortSettings}
+            extensions={timerExtensions}
             onClose={() => setShowSummaryModal(false)}
           />
         )}
