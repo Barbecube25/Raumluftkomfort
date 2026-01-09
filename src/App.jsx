@@ -101,11 +101,11 @@ const SENSOR_MAPPING = {
 };
 
 const DEFAULT_COMFORT_RANGES = {
-  living: { label: 'Wohnbereich', tempMin: 20, tempMax: 23, humMin: 40, humMax: 60 },
+  living: { label: 'Wohnbereich', tempMin: 18, tempMax: 23, humMin: 40, humMax: 65 },
   sleeping: { label: 'Schlafbereich', tempMin: 16, tempMax: 19, humMin: 40, humMax: 60 },
-  bathroom: { label: 'Badezimmer', tempMin: 21, tempMax: 24, humMin: 40, humMax: 70 },
+  bathroom: { label: 'Badezimmer', tempMin: 18, tempMax: 24, humMin: 40, humMax: 70 },
   storage: { label: 'Keller / Lager', tempMin: 10, tempMax: 25, humMin: 30, humMax: 65 },
-  default: { label: 'Sonstige', tempMin: 19, tempMax: 22, humMin: 40, humMax: 60 }
+  default: { label: 'Sonstige', tempMin: 18, tempMax: 22, humMin: 40, humMax: 60 }
 };
 
 const INITIAL_ROOMS = [
