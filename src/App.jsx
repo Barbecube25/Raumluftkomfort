@@ -600,6 +600,69 @@ const HeatingControlModal = ({ rooms, setTemperature, setHvacMode, onClose }) =>
   );
 };
 
+// --- SUMMARY WIDGET VIEW (NEU) ---
+const SummaryWidgetView = ({ rooms, outside, settings, extensions, refresh }) => {
+  const roomsWithActions = useMemo(() => {
+    return rooms.map(room => {
+      const analysis = analyzeRoom(room, outside, settings, rooms, extensions);
+      return {
+        ...room,
+        recommendations: analysis.recommendations,
+        score: analysis.score
+      };
+    }).filter(r => r.recommendations.length > 0);
+  }, [rooms, outside, settings, extensions]);
+
+  const avgScore = Math.round(rooms.reduce((acc, r) => acc + analyzeRoom(r, outside, settings, rooms, extensions).score, 0) / rooms.length);
+  
+  let statusText = "Gut";
+  let statusColorClass = "bg-emerald-900 text-emerald-400";
+  let iconColor = "text-emerald-400";
+  
+  if (avgScore < 80) { 
+      statusText = "Okay"; 
+      statusColorClass = "bg-yellow-900 text-yellow-400"; 
+      iconColor = "text-yellow-400";
+  }
+  if (avgScore < 60) { 
+      statusText = "Mies"; 
+      statusColorClass = "bg-red-900 text-red-400"; 
+      iconColor = "text-red-400";
+  }
+
+  return (
+    <div className={`min-h-screen ${statusColorClass} p-3 flex flex-col items-center justify-center`} onClick={() => window.open('/', '_self')}>
+       <div className="flex justify-between w-full items-center mb-2">
+          <div className="flex items-center gap-2">
+             <Activity size={20} className={iconColor}/>
+             <span className="text-xl font-bold text-white">{statusText} ({avgScore})</span>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); refresh(); }} className="p-1 rounded bg-black/20 text-white/70"><RefreshCw size={12}/></button>
+       </div>
+       
+       <div className="w-full space-y-2 overflow-hidden flex-1">
+          {roomsWithActions.length === 0 ? (
+             <div className="text-center text-white/80 text-sm mt-4">
+                Alles im grünen Bereich.
+             </div>
+          ) : (
+             roomsWithActions.slice(0, 2).map((room, i) => (
+                <div key={i} className="bg-black/20 p-2 rounded-lg text-xs text-white">
+                   <div className="font-bold mb-0.5">{room.name}</div>
+                   <div className="opacity-80 truncate">{room.recommendations[0]}</div>
+                </div>
+             ))
+          )}
+          {roomsWithActions.length > 2 && (
+             <div className="text-center text-[10px] text-white/60">
+                + {roomsWithActions.length - 2} weitere...
+             </div>
+          )}
+       </div>
+    </div>
+  );
+};
+
 // --- WIDGET VIEW ---
 const WidgetView = ({ outside, rooms, refresh }) => {
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
@@ -787,7 +850,7 @@ const WindowListModal = ({ rooms, onClose }) => {
   );
 };
 
-// --- MAIN APP COMPONENT ---
+// --- APP ---
 
 export default function App() {
   const [rooms, setRooms] = useState(INITIAL_ROOMS);
@@ -819,11 +882,16 @@ export default function App() {
   };
 
   const isWidgetMode = useMemo(() => {
-    return new URLSearchParams(window.location.search).get('view') === 'widget';
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get('view');
+    if (view === 'widget') return 'widget';
+    if (view === 'widget-summary') return 'widget-summary';
+    return null;
   }, []);
 
   const { refresh, enableDemoMode, setTemperature, setHvacMode } = useHomeAssistant();
 
+  // Data fetching hook usage merged here
   useEffect(() => {
     const fetchData = async () => {
       if (!HA_URL || !HA_TOKEN) {
@@ -1042,8 +1110,12 @@ export default function App() {
     sendNotification('Test-Alarm', { body: 'Dies ist eine Test-Benachrichtigung.' });
   };
 
-  if (isWidgetMode) {
+  if (isWidgetMode === 'widget') {
     return <WidgetView outside={outside} rooms={rooms} refresh={() => window.location.reload()} />;
+  }
+  
+  if (isWidgetMode === 'widget-summary') {
+     return <SummaryWidgetView rooms={rooms} outside={outside} settings={comfortSettings} extensions={timerExtensions} refresh={() => window.location.reload()} />;
   }
 
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
