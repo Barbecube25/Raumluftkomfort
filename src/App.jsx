@@ -20,9 +20,10 @@ import {
   Bell,
   BellOff,
   BellRing,
-  Settings, // Neu: Zahnrad Icon
-  Save, // Neu: Speichern Icon
-  RotateCcw // Neu: Reset Icon
+  Settings,
+  Save, 
+  RotateCcw,
+  ArrowRightLeft // Neu: Icon für Querlüften
 } from 'lucide-react';
 
 // --- KONFIGURATION & UMGEBUNGSVARIABLEN ---
@@ -38,6 +39,20 @@ const env = getEnv();
 
 const HA_URL = env.VITE_HA_URL || ""; 
 const HA_TOKEN = env.VITE_HA_TOKEN || "";
+
+// NEU: Definition der Raum-Verbindungen für Querlüftungs-Erkennung
+// Trage hier ein, welche Räume direkt miteinander verbunden sind (Türen/Durchgänge)
+const ROOM_CONNECTIONS = {
+  living: ['dining', 'hallway'], // Keine Tür zum Esszimmer, Tür zum Flur
+  kitchen: ['dining', 'hallway'], // Tür zum Esszimmer (meist offen), Tür zum Flur
+  dining: ['living', 'kitchen', 'hallway'], // Verbindung zu Wohnen & Küche & Flur
+  hallway: ['living', 'dining', 'kitchen', 'bedroom', 'kids', 'play', 'bath'], // Zentraler Verteiler
+  bedroom: ['hallway'],
+  kids: ['play', 'hallway'], // Tür zum Spielzimmer (immer offen), Tür zum Flur
+  play: ['kids', 'hallway'], // Tür zum Kinderzimmer (immer offen), Tür zum Flur
+  bath: ['hallway'],
+  basement: [] // Keller isoliert
+};
 
 const SENSOR_MAPPING = {
   living: { 
@@ -85,7 +100,6 @@ const SENSOR_MAPPING = {
   }
 };
 
-// Standardwerte (Fallback)
 const DEFAULT_COMFORT_RANGES = {
   living: { label: 'Wohnbereich', tempMin: 20, tempMax: 23, humMin: 40, humMax: 60 },
   sleeping: { label: 'Schlafbereich', tempMin: 16, tempMax: 19, humMin: 40, humMax: 60 },
@@ -141,14 +155,26 @@ const formatTimeAgo = (dateString) => {
   return '>1d';
 };
 
-// Logik jetzt mit dynamischen Settings
-const analyzeRoom = (room, outside, settings) => {
+// Analyse mit Querlüftungs-Logik
+const analyzeRoom = (room, outside, settings, allRooms) => {
   const limits = settings[room.type] || settings.default;
   let score = 100;
   let issues = [];
   let recommendations = [];
 
-  const targetMin = getTargetVentilationTime(outside.temp);
+  // Querlüftung prüfen
+  const neighbors = ROOM_CONNECTIONS[room.id] || [];
+  const crossVentilationRoom = neighbors.find(nId => {
+    const neighbor = allRooms.find(r => r.id === nId);
+    return neighbor && neighbor.windowOpen;
+  });
+  
+  const isCrossVentilating = room.windowOpen && !!crossVentilationRoom;
+  
+  // Timer Berechnung: Bei Querlüftung halbe Zeit
+  let targetMin = getTargetVentilationTime(outside.temp);
+  if (isCrossVentilating) targetMin = Math.ceil(targetMin / 2);
+  
   const ventDurationText = `${targetMin} Min`;
 
   // Temp Check
@@ -181,7 +207,20 @@ const analyzeRoom = (room, outside, settings) => {
           const remaining = Math.ceil(targetMin - openMin);
           
           if (remaining > 0) {
-             recommendations.push(`Noch ${remaining} Min. lüften`);
+             if (isCrossVentilating) {
+                recommendations.push(`Querlüften aktiv: Noch ${remaining} Min.`);
+             } else {
+                recommendations.push(`Noch ${remaining} Min. lüften`);
+                // Tipp für Querlüftung geben, wenn möglich
+                const potentialCross = neighbors.find(nId => {
+                    const n = allRooms.find(r => r.id === nId);
+                    return n && n.hasWindow && !n.windowOpen;
+                });
+                if (potentialCross) {
+                    const nName = allRooms.find(r => r.id === potentialCross)?.name;
+                    recommendations.push(`Tipp: Fenster in ${nName} öffnen für Durchzug!`);
+                }
+             }
           } else {
              recommendations.push(`Fenster schließen.`);
           }
@@ -196,7 +235,7 @@ const analyzeRoom = (room, outside, settings) => {
     }
   }
 
-  // CO2 Check (Grenzen fest bei 1000/1500)
+  // CO2 Check
   if (room.hasCo2 && room.co2) {
     if (room.co2 > 1000) {
        const isCrit = room.co2 >= 1500;
@@ -228,7 +267,8 @@ const analyzeRoom = (room, outside, settings) => {
     score: Math.max(0, score),
     issues,
     recommendations,
-    dewPoint: dewPointInside.toFixed(1)
+    dewPoint: dewPointInside.toFixed(1),
+    isCrossVentilating // Flag für UI
   };
 };
 
@@ -370,9 +410,7 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
               <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider border-b border-slate-800 pb-2">
                 {config.label || key}
               </h3>
-              
               <div className="grid grid-cols-2 gap-4">
-                {/* Temperatur */}
                 <div className="space-y-2">
                   <label className="text-xs text-slate-400 flex items-center gap-1"><Thermometer size={12}/> Temperatur Min/Max</label>
                   <div className="flex items-center gap-2">
@@ -391,8 +429,6 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
                     />
                   </div>
                 </div>
-
-                {/* Feuchtigkeit */}
                 <div className="space-y-2">
                   <label className="text-xs text-slate-400 flex items-center gap-1"><Droplets size={12}/> Feuchtigkeit Min/Max</label>
                   <div className="flex items-center gap-2">
@@ -417,16 +453,10 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
         </div>
 
         <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex justify-between gap-4">
-          <button 
-            onClick={handleReset}
-            className="flex items-center gap-2 px-4 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
+          <button onClick={handleReset} className="flex items-center gap-2 px-4 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
             <RotateCcw size={18}/> Reset
           </button>
-          <button 
-            onClick={() => onSave(localSettings)}
-            className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/20"
-          >
+          <button onClick={() => onSave(localSettings)} className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/20">
             <Save size={18}/> Speichern
           </button>
         </div>
@@ -476,7 +506,7 @@ const WidgetView = ({ outside, rooms, refresh }) => {
 
 // --- ROOM COMPONENTS ---
 
-const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary' }) => {
+const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onClick }) => {
   const themes = {
     primary: 'bg-slate-800 text-blue-200 border border-slate-700',
     secondary: 'bg-slate-800 text-indigo-200 border border-slate-700',
@@ -498,8 +528,8 @@ const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary' }) =
   );
 };
 
-const RoomCardM3 = ({ room, outsideData, settings, onClick }) => {
-  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings), [room, outsideData, settings]);
+const RoomCardM3 = ({ room, outsideData, settings, allRooms, onClick }) => {
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms), [room, outsideData, settings, allRooms]);
   
   let containerClass = "bg-slate-800 border-slate-700";
   let scoreBadgeClass = "bg-emerald-900/50 text-emerald-400 border border-emerald-800";
@@ -554,7 +584,9 @@ const RoomCardM3 = ({ room, outsideData, settings, onClick }) => {
 
       {analysis.recommendations.length > 0 && (
          <div className={`mt-2 flex items-start gap-2 text-[11px] p-2 rounded-xl ${countdownMsg ? 'bg-blue-900/30 text-blue-300 border border-blue-900/50' : 'bg-slate-900/30 text-slate-400'}`}>
-            {countdownMsg ? <Timer size={14} className="mt-0.5 shrink-0"/> : <AlertCircle size={14} className="mt-0.5 shrink-0 text-amber-500"/>}
+            {analysis.isCrossVentilating && <ArrowRightLeft size={14} className="mt-0.5 shrink-0 text-blue-400"/>}
+            {countdownMsg && !analysis.isCrossVentilating && <Timer size={14} className="mt-0.5 shrink-0"/>}
+            {!countdownMsg && <AlertCircle size={14} className="mt-0.5 shrink-0 text-amber-500"/>}
             <span className="line-clamp-1 leading-snug">{countdownMsg || analysis.recommendations[0]}</span>
          </div>
       )}
@@ -562,9 +594,9 @@ const RoomCardM3 = ({ room, outsideData, settings, onClick }) => {
   );
 };
 
-const M3Modal = ({ room, outsideData, settings, onClose }) => {
+const M3Modal = ({ room, outsideData, settings, allRooms, onClose }) => {
   if (!room) return null;
-  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings), [room, outsideData, settings]);
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms), [room, outsideData, settings, allRooms]);
   const limits = settings[room.type] || settings.default;
 
   return (
@@ -619,7 +651,7 @@ const M3Modal = ({ room, outsideData, settings, onClose }) => {
              {analysis.recommendations.length > 0 ? analysis.recommendations.map((rec, i) => (
                 <div key={i} className={`flex gap-3 p-3 rounded-2xl items-start ${rec.includes('Noch') ? 'bg-blue-900/30 text-blue-200 border border-blue-900/50' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}>
                    <div className="mt-0.5 opacity-70">
-                      {rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}
+                      {rec.includes('Querlüften') ? <ArrowRightLeft size={16}/> : rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}
                    </div>
                    <div className="text-sm font-medium">{rec}</div>
                 </div>
@@ -653,51 +685,6 @@ const M3Modal = ({ room, outsideData, settings, onClose }) => {
   );
 };
 
-const WindowListModal = ({ rooms, onClose }) => {
-  const openWindows = rooms.filter(r => r.windowOpen);
-
-  return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 p-6">
-        <div className="flex justify-between items-center mb-4">
-           <h3 className="text-xl font-normal text-white">Fensterstatus</h3>
-           <button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300">
-             <X size={20}/>
-           </button>
-        </div>
-        
-        <div className="space-y-3">
-          {openWindows.length > 0 ? (
-            openWindows.map(room => (
-              <div key={room.id} className="flex items-center gap-3 p-4 bg-slate-800 text-blue-200 rounded-2xl border border-slate-700">
-                 <div className="bg-blue-900/30 p-2 rounded-full text-blue-400">
-                    <Wind size={20}/>
-                 </div>
-                 <div>
-                   <span className="font-medium block text-white">{room.name}</span>
-                   <span className="text-xs opacity-70">Fenster geöffnet</span>
-                 </div>
-              </div>
-            ))
-          ) : (
-             <div className="flex flex-col items-center py-8 text-emerald-400 bg-emerald-900/20 rounded-2xl border border-emerald-900/30">
-                <CheckCircle size={40} className="mb-3 opacity-80"/>
-                <span className="font-medium text-lg">Alle geschlossen</span>
-                <span className="text-sm opacity-70">Kein Fenster ist aktuell geöffnet</span>
-             </div>
-          )}
-        </div>
-        
-        <div className="mt-6 flex justify-end">
-           <button onClick={onClose} className="px-5 py-2 rounded-full bg-slate-700 text-white text-sm font-medium hover:bg-slate-600 transition-colors">
-             Schließen
-           </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 // --- MAIN APP COMPONENT ---
 
 export default function App() {
@@ -709,13 +696,12 @@ export default function App() {
   
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [showWindowModal, setShowWindowModal] = useState(false);
-  const [showSettings, setShowSettings] = useState(false); // NEU: Settings Modal State
+  const [showSettings, setShowSettings] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
   
   const [notifiedSessions, setNotifiedSessions] = useState(new Set());
   const [notifyPerm, setNotifyPerm] = useState('default');
 
-  // NEU: Comfort Settings mit Persistenz
   const [comfortSettings, setComfortSettings] = useState(() => {
     const saved = localStorage.getItem('comfortSettings');
     return saved ? JSON.parse(saved) : DEFAULT_COMFORT_RANGES;
@@ -733,7 +719,6 @@ export default function App() {
 
   const { refresh, enableDemoMode } = useHomeAssistant();
 
-  // Custom data fetching hook logic merged here to avoid duplication for this file response
   useEffect(() => {
     const fetchData = async () => {
       if (!HA_URL || !HA_TOKEN) {
@@ -839,13 +824,18 @@ export default function App() {
     rooms.forEach(room => {
       if (!room.windowOpen || !room.lastWindowOpen) return;
 
-      // Übergebe hier comfortSettings an analyzeRoom
       const limits = comfortSettings[room.type] || comfortSettings.default;
-      const analysis = analyzeRoom(room, outside, comfortSettings);
+      const analysis = analyzeRoom(room, outside, comfortSettings, rooms); // rooms übergeben
       const targetMin = getTargetVentilationTime(outside.temp);
       const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
       const openMin = diffMs / 60000;
-      const remaining = targetMin - openMin;
+      
+      // Nutze die berechnete Zeit aus der Analyse (ggf. halbiert wegen Querlüften)
+      // Um das exakt zu machen, können wir auch direkt auf isCrossVentilating prüfen
+      let adjustedTarget = targetMin;
+      if (analysis.isCrossVentilating) adjustedTarget = Math.ceil(targetMin / 2);
+      
+      const remaining = adjustedTarget - openMin;
       
       const sessionBase = `${room.id}-${room.lastWindowOpen}`;
       const startKey = `${sessionBase}-start`;
@@ -855,7 +845,7 @@ export default function App() {
 
       if (!notifiedSessions.has(startKey)) {
          sendNotification(`Lüftung gestartet: ${room.name}`, {
-            body: `Timer gesetzt auf ${targetMin} Minuten.`,
+            body: `Timer gesetzt auf ${adjustedTarget} Minuten.${analysis.isCrossVentilating ? ' (Querlüften aktiv)' : ''}`,
             tag: startKey
          });
          setNotifiedSessions(prev => new Set(prev).add(startKey));
@@ -872,7 +862,7 @@ export default function App() {
 
       if (remaining <= 0 && !notifiedSessions.has(timerKey)) {
          sendNotification(`Fenster schließen: ${room.name}`, {
-            body: `Zeit abgelaufen (${targetMin} Min).`,
+            body: `Zeit abgelaufen (${adjustedTarget} Min).`,
             tag: timerKey
          });
          setNotifiedSessions(prev => new Set(prev).add(timerKey));
@@ -891,7 +881,6 @@ export default function App() {
     });
   }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings]);
 
-  // Install Prompt Logic
   useEffect(() => {
     const handler = (e) => { e.preventDefault(); setInstallPrompt(e); };
     window.addEventListener('beforeinstallprompt', handler);
@@ -953,7 +942,6 @@ export default function App() {
                 </button>
               )}
               
-              {/* NEU: Einstellungen Button */}
               <button 
                 onClick={() => setShowSettings(true)}
                 className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700"
@@ -1023,7 +1011,8 @@ export default function App() {
               key={room.id} 
               room={room} 
               outsideData={outside}
-              settings={comfortSettings} // Settings übergeben
+              settings={comfortSettings}
+              allRooms={rooms} // WICHTIG: rooms übergeben für Querlüftungs-Check
               onClick={() => setSelectedRoom(room)}
             />
           ))}
@@ -1034,7 +1023,8 @@ export default function App() {
           <M3Modal 
             room={selectedRoom} 
             outsideData={outside}
-            settings={comfortSettings} // Settings übergeben
+            settings={comfortSettings}
+            allRooms={rooms}
             onClose={() => setSelectedRoom(null)}
           />
         )}
@@ -1046,7 +1036,6 @@ export default function App() {
           />
         )}
 
-        {/* NEU: Settings Modal */}
         {showSettings && (
           <SettingsModal 
             settings={comfortSettings}
