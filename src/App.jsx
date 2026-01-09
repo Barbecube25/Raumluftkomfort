@@ -7,12 +7,9 @@ import {
   Home, 
   AlertCircle, 
   CheckCircle, 
-  Clock, 
   CloudRain,
   RefreshCw,
   X,
-  MoreVertical,
-  ArrowUpRight,
   Wifi,
   WifiOff,
   Timer,
@@ -21,11 +18,10 @@ import {
   Lock,
   Download,
   Bell,
-  BellOff,
-  BellRing // Neues Icon für Test
+  BellOff
 } from 'lucide-react';
 
-// --- KONFIGURATION FÜR HOME ASSISTANT ---
+// --- KONFIGURATION & UMGEBUNGSVARIABLEN ---
 
 const getEnv = () => {
   try {
@@ -95,7 +91,7 @@ const COMFORT_RANGES = {
 
 const INITIAL_ROOMS = [
   { id: 'living', name: 'Wohnzimmer', type: 'living', hasCo2: true, hasWindow: true, hasVentilation: false, temp: 21.5, humidity: 45, co2: 650, windowOpen: false, lastWindowOpen: null },
-  { id: 'kitchen', name: 'Küche', type: 'living', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 22.1, humidity: 68, co2: null, windowOpen: true, lastWindowOpen: new Date(Date.now() - 1000 * 60 * 5).toISOString() }, 
+  { id: 'kitchen', name: 'Küche', type: 'living', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 22.1, humidity: 68, co2: null, windowOpen: true, lastWindowOpen: null }, 
   { id: 'bedroom', name: 'Schlafzimmer', type: 'sleeping', hasCo2: true, hasWindow: true, hasVentilation: true, temp: 18.0, humidity: 50, co2: 900, windowOpen: false, lastWindowOpen: null },
   { id: 'kids', name: 'Kinderzimmer', type: 'sleeping', hasCo2: false, hasWindow: true, hasVentilation: true, temp: 20.5, humidity: 55, co2: null, windowOpen: false, lastWindowOpen: null },
   { id: 'play', name: 'Spielzimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.0, humidity: 48, co2: null, windowOpen: null, lastWindowOpen: null },
@@ -111,7 +107,7 @@ const OUTSIDE_DATA = {
   condition: 'Cloudy'
 };
 
-// --- LOGIK & ALGORITHMEN ---
+// --- HELPER FUNCTIONS ---
 
 const calculateDewPoint = (T, RH) => {
   if (!T || !RH) return 0;
@@ -121,12 +117,23 @@ const calculateDewPoint = (T, RH) => {
   return (b * alpha) / (a - alpha);
 };
 
-// Berechnet die optimale Lüftungsdauer in Minuten
 const getTargetVentilationTime = (outsideTemp) => {
   if (outsideTemp < 5) return 5;
   if (outsideTemp < 10) return 10;
   if (outsideTemp < 20) return 20;
   return 30;
+};
+
+const formatTimeAgo = (dateString) => {
+  if (!dateString) return '';
+  const diff = Date.now() - new Date(dateString).getTime();
+  const minutes = Math.floor(diff / 60000);
+  const hours = Math.floor(minutes / 60);
+  
+  if (minutes < 1) return 'gerade eben';
+  if (minutes < 60) return `${minutes}m`;
+  if (hours < 24) return `${hours}h`;
+  return '>1d';
 };
 
 const analyzeRoom = (room, outside) => {
@@ -138,6 +145,7 @@ const analyzeRoom = (room, outside) => {
   const targetMin = getTargetVentilationTime(outside.temp);
   const ventDurationText = `${targetMin} Min`;
 
+  // Temp Check
   if (room.temp < limits.tempMin) {
     score -= 20;
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
@@ -148,6 +156,7 @@ const analyzeRoom = (room, outside) => {
     recommendations.push('Heizung runterdrehen');
   }
 
+  // Humidity Check
   const dewPointInside = calculateDewPoint(room.temp, room.humidity);
   const dewPointOutside = calculateDewPoint(outside.temp, outside.humidity);
 
@@ -173,7 +182,7 @@ const analyzeRoom = (room, outside) => {
       } else {
           recommendations.push(`Lüften: ${ventDurationText}`);
           if (room.hasVentilation) {
-            recommendations.push('Lüftung an?');
+            recommendations.push('Falls möglich: Lüftung prüfen');
           }
       }
     } else {
@@ -181,6 +190,7 @@ const analyzeRoom = (room, outside) => {
     }
   }
 
+  // CO2 Check
   if (room.hasCo2 && room.co2) {
     if (room.co2 > 1000) {
        const isCrit = room.co2 >= 1500;
@@ -199,15 +209,11 @@ const analyzeRoom = (room, outside) => {
           }
        } else {
           recommendations.push(isCrit ? `Sofort öffnen! (${ventDurationText})` : `Stoßlüften (${ventDurationText})`);
-          if (room.hasVentilation) {
-            recommendations.push('Lüftung an?');
-          }
        }
     }
   }
 
   const isVentilating = recommendations.some(r => r.includes('Noch') && r.includes('lüften'));
-  
   if (room.windowOpen && room.temp < limits.tempMin && !isVentilating) {
     recommendations.push('Wärmeverlust!');
   }
@@ -220,138 +226,9 @@ const analyzeRoom = (room, outside) => {
   };
 };
 
-const formatTimeAgo = (dateString) => {
-  if (!dateString) return '';
-  const diff = Date.now() - new Date(dateString).getTime();
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(minutes / 60);
-  
-  if (minutes < 1) return 'gerade eben';
-  if (minutes < 60) return `${minutes}m`;
-  if (hours < 24) return `${hours}h`;
-  return '>1d';
-};
+// --- COMPONENTS ---
 
-const useHomeAssistant = () => {
-  const [rooms, setRooms] = useState(INITIAL_ROOMS);
-  const [outside, setOutside] = useState(OUTSIDE_DATA);
-  const [isDemoMode, setIsDemoMode] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState('connected');
-  const [errorMessage, setErrorMessage] = useState('');
-  const [lastUpdate, setLastUpdate] = useState(new Date());
-
-  const fetchData = async () => {
-    if (!HA_URL || !HA_TOKEN) {
-      setIsDemoMode(true);
-      simulateDataChange();
-      return;
-    }
-
-    const isAppHttps = window.location.protocol === 'https:';
-    const isHaHttp = HA_URL.startsWith('http://');
-    
-    if (isAppHttps && isHaHttp) {
-        setConnectionStatus('error');
-        setErrorMessage('HTTPS/HTTP Konflikt. Bitte Nabu Casa URL nutzen.');
-        return;
-    }
-
-    try {
-      setIsDemoMode(false);
-      setConnectionStatus('loading');
-      setErrorMessage('');
-      
-      const response = await fetch(`${HA_URL}/api/states`, {
-        headers: {
-          'Authorization': `Bearer ${HA_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP Fehler: ${response.status}`);
-      }
-      
-      const states = await response.json();
-      setConnectionStatus('connected');
-      setLastUpdate(new Date());
-
-      const getNum = (id) => {
-        const entity = states.find(s => s.entity_id === id);
-        return entity && !isNaN(entity.state) ? parseFloat(entity.state) : null;
-      };
-
-      if (SENSOR_MAPPING.outside) {
-        setOutside({
-          temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
-          humidity: getNum(SENSOR_MAPPING.outside.humidity) || OUTSIDE_DATA.humidity,
-          pressure: 1013,
-          condition: 'Loaded'
-        });
-      }
-
-      setRooms(prevRooms => prevRooms.map(room => {
-        const map = SENSOR_MAPPING[room.id];
-        if (!map) return room;
-
-        const windowSensor = states.find(s => s.entity_id === map.window);
-        const windowOpen = windowSensor ? windowSensor.state === 'on' : false;
-        
-        let lastOpen = room.lastWindowOpen;
-        
-        if (windowOpen && windowSensor) {
-            lastOpen = windowSensor.last_changed;
-        } else if (!windowOpen) {
-            lastOpen = null; 
-        }
-
-        return {
-          ...room,
-          temp: getNum(map.temp) || room.temp,
-          humidity: getNum(map.humidity) || room.humidity,
-          co2: map.co2 ? getNum(map.co2) : room.co2,
-          windowOpen: windowOpen,
-          lastWindowOpen: lastOpen
-        };
-      }));
-
-    } catch (error) {
-      console.error("HA Error:", error);
-      setConnectionStatus('error');
-      setErrorMessage('Verbindungsfehler (CORS?)');
-    }
-  };
-
-  const simulateDataChange = () => {
-    setRooms(prevRooms => prevRooms.map(room => {
-      const tempChange = (Math.random() - 0.5) * 0.4;
-      const humChange = Math.floor((Math.random() - 0.5) * 3);
-      const co2Change = room.hasCo2 ? Math.floor((Math.random() - 0.5) * 50) : null;
-      return {
-        ...room,
-        temp: Number((room.temp + tempChange).toFixed(1)),
-        humidity: Math.max(30, Math.min(99, room.humidity + humChange)),
-        co2: room.co2 ? Math.max(400, room.co2 + co2Change) : null
-      };
-    }));
-  };
-
-  const enableDemoMode = () => {
-      setIsDemoMode(true);
-      setConnectionStatus('connected');
-      simulateDataChange();
-  };
-
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000); 
-    return () => clearInterval(interval);
-  }, []);
-
-  return { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh: fetchData, enableDemoMode };
-};
-
-const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary' }) => {
+const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onClick }) => {
   const themes = {
     primary: 'bg-slate-800 text-blue-200 border border-slate-700',
     secondary: 'bg-slate-800 text-indigo-200 border border-slate-700',
@@ -360,7 +237,10 @@ const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary' }) =
   };
   
   return (
-    <div className={`p-4 rounded-3xl flex flex-col justify-between h-28 ${themes[theme]}`}>
+    <div 
+      onClick={onClick}
+      className={`p-4 rounded-3xl flex flex-col justify-between h-28 ${themes[theme]} ${onClick ? 'cursor-pointer' : ''}`}
+    >
       <div className="flex justify-between items-start">
         <Icon size={20} className="opacity-80"/>
         <span className="text-2xl font-semibold">{value}</span>
@@ -417,12 +297,12 @@ const RoomCardM3 = ({ room, outsideData, onClick }) => {
       <div className="grid grid-cols-2 gap-2 mb-2">
         <div className="bg-slate-900/50 p-2 rounded-xl">
            <div className="text-[10px] text-slate-500 mb-0.5">Temp</div>
-           <div className="text-lg font-medium text-slate-200">{room.temp.toFixed(1)}°</div>
+           <div className="text-lg font-medium text-slate-200">{room.temp ? room.temp.toFixed(1) : '-'}°</div>
         </div>
         <div className="bg-slate-900/50 p-2 rounded-xl">
            <div className="text-[10px] text-slate-500 mb-0.5">Feuchte</div>
            <div className={`text-lg font-medium ${analysis.issues.some(i => i.type === 'hum') ? 'text-red-400' : 'text-slate-200'}`}>
-             {room.humidity}%
+             {room.humidity || '-'}%
            </div>
         </div>
       </div>
@@ -527,118 +407,248 @@ const M3Modal = ({ room, outsideData, onClose }) => {
   );
 };
 
-export default function App() {
-  const { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh, enableDemoMode } = useHomeAssistant();
-  const [selectedRoom, setSelectedRoom] = useState(null);
-  const [installPrompt, setInstallPrompt] = useState(null);
-  const [notifiedSessions, setNotifiedSessions] = useState(new Set());
-  const [notifyPerm, setNotifyPerm] = useState('default'); 
+const WindowListModal = ({ rooms, onClose }) => {
+  const openWindows = rooms.filter(r => r.windowOpen);
 
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 p-6">
+        <div className="flex justify-between items-center mb-4">
+           <h3 className="text-xl font-normal text-white">Fensterstatus</h3>
+           <button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300">
+             <X size={20}/>
+           </button>
+        </div>
+        
+        <div className="space-y-3">
+          {openWindows.length > 0 ? (
+            openWindows.map(room => (
+              <div key={room.id} className="flex items-center gap-3 p-4 bg-slate-800 text-blue-200 rounded-2xl border border-slate-700">
+                 <div className="bg-blue-900/30 p-2 rounded-full text-blue-400">
+                    <Wind size={20}/>
+                 </div>
+                 <div>
+                   <span className="font-medium block text-white">{room.name}</span>
+                   <span className="text-xs opacity-70">Fenster geöffnet</span>
+                 </div>
+              </div>
+            ))
+          ) : (
+             <div className="flex flex-col items-center py-8 text-emerald-400 bg-emerald-900/20 rounded-2xl border border-emerald-900/30">
+                <CheckCircle size={40} className="mb-3 opacity-80"/>
+                <span className="font-medium text-lg">Alle geschlossen</span>
+                <span className="text-sm opacity-70">Kein Fenster ist aktuell geöffnet</span>
+             </div>
+          )}
+        </div>
+        
+        <div className="mt-6 flex justify-end">
+           <button onClick={onClose} className="px-5 py-2 rounded-full bg-slate-700 text-white text-sm font-medium hover:bg-slate-600 transition-colors">
+             Schließen
+           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- MAIN APP COMPONENT ---
+
+export default function App() {
+  // STATE DEFINITIONS - WICHTIG: showWindowModal ist hier definiert!
+  const [rooms, setRooms] = useState(INITIAL_ROOMS);
+  const [outside, setOutside] = useState(OUTSIDE_DATA);
+  const [isDemoMode, setIsDemoMode] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState('connected');
+  const [errorMessage, setErrorMessage] = useState('');
+  
+  const [selectedRoom, setSelectedRoom] = useState(null);
+  const [showWindowModal, setShowWindowModal] = useState(false); // Hier ist die fehlende Definition
+  const [installPrompt, setInstallPrompt] = useState(null);
+  
+  const [notifiedSessions, setNotifiedSessions] = useState(new Set());
+  const [notifyPerm, setNotifyPerm] = useState('default');
+
+  // Home Assistant Logic
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!HA_URL || !HA_TOKEN) {
+        setIsDemoMode(true);
+        setRooms(prev => prev.map(r => ({
+           ...r,
+           temp: Number((r.temp + (Math.random() - 0.5) * 0.4).toFixed(1))
+        })));
+        return;
+      }
+
+      // Check HTTPS/HTTP
+      if (window.location.protocol === 'https:' && HA_URL.startsWith('http://')) {
+          setConnectionStatus('error');
+          setErrorMessage('HTTPS/HTTP Konflikt. Bitte Nabu Casa URL nutzen.');
+          return;
+      }
+
+      try {
+        setConnectionStatus('loading');
+        const response = await fetch(`${HA_URL}/api/states`, {
+          headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json' },
+        });
+        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+        
+        const states = await response.json();
+        setConnectionStatus('connected');
+        setIsDemoMode(false);
+        setErrorMessage('');
+
+        const getNum = (id) => {
+          const e = states.find(s => s.entity_id === id);
+          return e && !isNaN(e.state) ? parseFloat(e.state) : null;
+        };
+
+        // Update Outside
+        if (SENSOR_MAPPING.outside) {
+          setOutside({
+            temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
+            humidity: getNum(SENSOR_MAPPING.outside.humidity) || OUTSIDE_DATA.humidity,
+            pressure: 1013,
+            condition: 'Loaded'
+          });
+        }
+
+        // Update Rooms
+        setRooms(prevRooms => prevRooms.map(room => {
+          const map = SENSOR_MAPPING[room.id];
+          if (!map) return room;
+
+          const wSensor = states.find(s => s.entity_id === map.window);
+          const wOpen = wSensor ? wSensor.state === 'on' : false;
+          
+          let lastOpen = room.lastWindowOpen;
+          if (wOpen && wSensor) lastOpen = wSensor.last_changed;
+          else if (!wOpen) lastOpen = null;
+
+          return {
+            ...room,
+            temp: getNum(map.temp) || room.temp,
+            humidity: getNum(map.humidity) || room.humidity,
+            co2: map.co2 ? getNum(map.co2) : room.co2,
+            windowOpen: wOpen,
+            lastWindowOpen: lastOpen
+          };
+        }));
+
+      } catch (error) {
+        console.error("HA Fetch Error", error);
+        setConnectionStatus('error');
+        setErrorMessage('Verbindungsfehler (CORS?)');
+      }
+    };
+
+    fetchData();
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
+  }, []); // Run on mount
+
+  // Notification Permission Check
   useEffect(() => {
     if ('Notification' in window) {
       setNotifyPerm(Notification.permission);
     }
   }, []);
 
-  // --- SICHERE BENACHRICHTIGUNG (Android Fix) ---
+  // Send Notification Helper
   const sendNotification = (title, options) => {
     if (Notification.permission !== 'granted') return;
     
-    // Optionen für Android optimieren
-    const extendedOptions = {
+    const extOptions = {
         ...options,
-        vibrate: [200, 100, 200], // Vibration hinzufügen
-        requireInteraction: true,  // Bleibt sichtbar
-        badge: '/pwa-192x192.png'
+        vibrate: [200, 100, 200], 
+        requireInteraction: true,  
+        icon: '/pwa-192x192.png'
     };
 
     try {
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.ready.then(registration => {
-          registration.showNotification(title, extendedOptions);
-        }).catch(err => {
-            console.error('SW Notification failed, trying fallback', err);
-            new Notification(title, extendedOptions);
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.ready.then(reg => {
+          reg.showNotification(title, extOptions);
         });
       } else {
-        new Notification(title, extendedOptions);
+        new Notification(title, extOptions);
       }
     } catch (e) {
-      console.error('Notification failed:', e);
+      console.error('Notify failed', e);
     }
   };
 
+  // Check Logic
   useEffect(() => {
-    if (notifyPerm !== 'granted') return; // Demo Modus Check entfernt, damit man auch da testen kann
+    if (notifyPerm !== 'granted') return;
 
     rooms.forEach(room => {
       if (!room.windowOpen || !room.lastWindowOpen) return;
 
+      const analysis = analyzeRoom(room, outside);
       const targetMin = getTargetVentilationTime(outside.temp);
       const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
       const openMin = diffMs / 60000;
       const remaining = targetMin - openMin;
       
-      const sessionKey = `${room.id}-${room.lastWindowOpen}`;
+      const sessionBase = `${room.id}-${room.lastWindowOpen}`;
+      const timerKey = `${sessionBase}-timer`;
+      const qualityKey = `${sessionBase}-quality`;
 
-      if (remaining <= 0 && !notifiedSessions.has(sessionKey)) {
+      // 1. Time Expired
+      if (remaining <= 0 && !notifiedSessions.has(timerKey)) {
          sendNotification(`Fenster schließen: ${room.name}`, {
-            body: `Die empfohlene Lüftungszeit von ${targetMin} Min. ist abgelaufen.`,
-            icon: '/pwa-192x192.png',
-            tag: sessionKey
+            body: `Zeit abgelaufen (${targetMin} Min).`,
+            tag: timerKey
          });
-         
-         setNotifiedSessions(prev => new Set(prev).add(sessionKey));
+         setNotifiedSessions(prev => new Set(prev).add(timerKey));
+      }
+
+      // 2. Air Quality Good
+      const issues = analysis.issues;
+      const hasIssues = issues.some(i => i.type === 'hum' && i.status === 'high' || i.type === 'co2');
+      
+      if (!hasIssues && openMin > 2 && !notifiedSessions.has(qualityKey)) {
+         sendNotification(`Luft gut: ${room.name}`, {
+            body: `Werte sind im grünen Bereich.`,
+            tag: qualityKey
+         });
+         setNotifiedSessions(prev => new Set(prev).add(qualityKey));
       }
     });
-  }, [rooms, outside, notifiedSessions, notifyPerm, isDemoMode]);
+  }, [rooms, outside, notifiedSessions, notifyPerm]);
 
-  const requestNotifications = async () => {
-    if (!('Notification' in window)) {
-      alert('Dieser Browser unterstützt keine Benachrichtigungen.');
-      return;
-    }
-    const permission = await Notification.requestPermission();
-    setNotifyPerm(permission);
-    if (permission === 'granted') {
-      sendNotification('Benachrichtigungen aktiviert', {
-        body: 'Du wirst informiert, wenn ein Fenster geschlossen werden muss.',
-        icon: '/pwa-192x192.png'
-      });
-    }
-  };
-
-  // Manuelle Test-Funktion
-  const testNotification = () => {
-    sendNotification('Test-Alarm', {
-      body: 'Dies ist eine Test-Benachrichtigung für dein Dashboard.',
-      icon: '/pwa-192x192.png'
-    });
-  };
-
+  // Install Prompt Logic
   useEffect(() => {
-    const handleInstallPrompt = (e) => {
-      e.preventDefault();
-      setInstallPrompt(e);
-    };
-    window.addEventListener('beforeinstallprompt', handleInstallPrompt);
-    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
+    const handler = (e) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
   const handleInstallClick = async () => {
     if (!installPrompt) return;
     installPrompt.prompt();
-    const { outcome } = await installPrompt.userChoice;
-    if (outcome === 'accepted') setInstallPrompt(null);
+    const res = await installPrompt.userChoice;
+    if (res.outcome === 'accepted') setInstallPrompt(null);
+  };
+
+  const requestNotifications = async () => {
+    if (!('Notification' in window)) return;
+    const res = await Notification.requestPermission();
+    setNotifyPerm(res);
+    if (res === 'granted') sendNotification('Test', { body: 'Benachrichtigungen aktiv' });
   };
 
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
   const openWindows = rooms.filter(r => r.windowOpen).length;
-  
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 safe-area-inset-bottom">
       <div className="max-w-7xl mx-auto pb-8">
         
+        {/* HEADER */}
         <header className="mb-6 flex flex-col gap-4">
           <div className="flex justify-between items-center">
             <div>
@@ -655,36 +665,21 @@ export default function App() {
             </div>
             
             <div className="flex gap-2">
-              {/* Notification Toggle & Test */}
+              {/* Notif Button */}
               {'Notification' in window && (
-                notifyPerm === 'granted' ? (
-                  <button 
-                    onClick={testNotification} 
-                    className="bg-emerald-900/50 text-emerald-400 p-3 rounded-full hover:bg-emerald-900 border border-emerald-800"
-                    title="Benachrichtigung testen"
-                  >
-                    <BellRing size={20} />
-                  </button>
-                ) : (
-                  <button 
-                    onClick={requestNotifications} 
-                    className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700 relative"
-                    title="Benachrichtigungen aktivieren"
-                  >
-                    <BellOff size={20} />
-                    <span className="absolute top-2 right-2 w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
-                  </button>
-                )
+                <button 
+                  onClick={notifyPerm === 'granted' ? () => sendNotification('Test', {body:'Test OK'}) : requestNotifications} 
+                  className={`p-3 rounded-full border transition-colors ${notifyPerm === 'granted' ? 'bg-emerald-900/30 border-emerald-800 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
+                >
+                  {notifyPerm === 'granted' ? <Bell size={20} /> : <BellOff size={20} />}
+                </button>
               )}
               
               {installPrompt && (
-                <button onClick={handleInstallClick} className="bg-blue-600 text-white p-3 rounded-full hover:bg-blue-500 shadow-lg shadow-blue-900/20">
+                <button onClick={handleInstallClick} className="bg-blue-600 text-white p-3 rounded-full shadow-lg">
                   <Download size={20} />
                 </button>
               )}
-              <button onClick={refresh} className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700">
-                <RefreshCw size={20} className={connectionStatus === 'loading' ? 'animate-spin' : ''}/>
-              </button>
             </div>
           </div>
 
@@ -692,14 +687,14 @@ export default function App() {
             <div className="p-3 bg-red-900/20 border border-red-900/50 rounded-xl flex items-start gap-3 text-red-300 text-xs">
                <AlertTriangle className="shrink-0 mt-0.5" size={14}/>
                <div>
-                 <span className="font-bold block mb-0.5">Verbindungsfehler</span>
+                 <span className="font-bold block mb-0.5">Fehler</span>
                  {errorMessage}
-                 <button onClick={enableDemoMode} className="mt-2 text-white underline decoration-dotted">Demo Modus aktivieren</button>
                </div>
             </div>
           )}
         </header>
 
+        {/* TOP STATS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
           <M3StatCard 
             icon={CloudRain} 
@@ -721,6 +716,7 @@ export default function App() {
             value={openWindows} 
             subValue={openWindows === 1 ? 'Offen' : 'Offen'}
             theme="tertiary"
+            onClick={() => setShowWindowModal(true)}
           />
           <div className="bg-emerald-900/20 text-emerald-400 border border-emerald-900/30 p-4 rounded-3xl flex flex-col justify-between h-28">
              <div className="flex justify-between items-start">
@@ -731,7 +727,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* DAS WICHTIGE UPDATE: GRID-COLS-2 AUCH AUF MOBILE */}
+        {/* ROOM GRID */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
           {rooms.map(room => (
             <RoomCardM3 
@@ -743,11 +739,19 @@ export default function App() {
           ))}
         </div>
         
+        {/* MODALS */}
         {selectedRoom && (
           <M3Modal 
             room={selectedRoom} 
             outsideData={outside}
             onClose={() => setSelectedRoom(null)}
+          />
+        )}
+
+        {showWindowModal && (
+          <WindowListModal 
+             rooms={rooms}
+             onClose={() => setShowWindowModal(false)}
           />
         )}
 
