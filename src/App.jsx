@@ -7,6 +7,7 @@ import {
   Home, 
   AlertCircle, 
   CheckCircle, 
+  Clock, 
   CloudRain,
   RefreshCw,
   X,
@@ -15,10 +16,13 @@ import {
   Timer,
   Fan,
   AlertTriangle,
-  Lock,
   Download,
   Bell,
-  BellOff
+  BellOff,
+  BellRing,
+  Settings, // Neu: Zahnrad Icon
+  Save, // Neu: Speichern Icon
+  RotateCcw // Neu: Reset Icon
 } from 'lucide-react';
 
 // --- KONFIGURATION & UMGEBUNGSVARIABLEN ---
@@ -43,8 +47,8 @@ const SENSOR_MAPPING = {
     window: 'binary_sensor.terrassentur_tur' 
   },
   kitchen: { 
-    temp: 'sensor.indoor_aussentemperatur_temperature', 
-    humidity: 'sensor.indoor_aussentemperatur_humidity', 
+    temp: 'sensor.kuchensensor_temperatur', 
+    humidity: 'sensor.kuchensensor_luftfeuchtigkeit', 
     window: 'binary_sensor.kuchenfenster_tur' 
   },
   bedroom: { 
@@ -81,12 +85,13 @@ const SENSOR_MAPPING = {
   }
 };
 
-const COMFORT_RANGES = {
-  living: { tempMin: 20, tempMax: 23, humMin: 40, humMax: 60 },
-  sleeping: { tempMin: 16, tempMax: 19, humMin: 40, humMax: 60 },
-  bathroom: { tempMin: 21, tempMax: 24, humMin: 40, humMax: 70 },
-  storage: { tempMin: 10, tempMax: 25, humMin: 30, humMax: 65 },
-  default: { tempMin: 19, tempMax: 22, humMin: 40, humMax: 60 }
+// Standardwerte (Fallback)
+const DEFAULT_COMFORT_RANGES = {
+  living: { label: 'Wohnbereich', tempMin: 20, tempMax: 23, humMin: 40, humMax: 60 },
+  sleeping: { label: 'Schlafbereich', tempMin: 16, tempMax: 19, humMin: 40, humMax: 60 },
+  bathroom: { label: 'Badezimmer', tempMin: 21, tempMax: 24, humMin: 40, humMax: 70 },
+  storage: { label: 'Keller / Lager', tempMin: 10, tempMax: 25, humMin: 30, humMax: 65 },
+  default: { label: 'Sonstige', tempMin: 19, tempMax: 22, humMin: 40, humMax: 60 }
 };
 
 const INITIAL_ROOMS = [
@@ -136,8 +141,9 @@ const formatTimeAgo = (dateString) => {
   return '>1d';
 };
 
-const analyzeRoom = (room, outside) => {
-  const limits = COMFORT_RANGES[room.type] || COMFORT_RANGES.default;
+// Logik jetzt mit dynamischen Settings
+const analyzeRoom = (room, outside, settings) => {
+  const limits = settings[room.type] || settings.default;
   let score = 100;
   let issues = [];
   let recommendations = [];
@@ -190,7 +196,7 @@ const analyzeRoom = (room, outside) => {
     }
   }
 
-  // CO2 Check
+  // CO2 Check (Grenzen fest bei 1000/1500)
   if (room.hasCo2 && room.co2) {
     if (room.co2 > 1000) {
        const isCrit = room.co2 >= 1500;
@@ -226,9 +232,251 @@ const analyzeRoom = (room, outside) => {
   };
 };
 
-// --- COMPONENTS ---
+// --- DATA HOOK ---
 
-const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onClick }) => {
+const useHomeAssistant = () => {
+  const [rooms, setRooms] = useState(INITIAL_ROOMS);
+  const [outside, setOutside] = useState(OUTSIDE_DATA);
+  const [isDemoMode, setIsDemoMode] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState('connected');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const fetchData = async () => {
+    if (!HA_URL || !HA_TOKEN) {
+      setIsDemoMode(true);
+      simulateDataChange();
+      return;
+    }
+
+    try {
+      setConnectionStatus('loading');
+      const response = await fetch(`${HA_URL}/api/states`, {
+        headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+      
+      const states = await response.json();
+      setConnectionStatus('connected');
+      setIsDemoMode(false);
+      setErrorMessage('');
+
+      const getNum = (id) => {
+        const e = states.find(s => s.entity_id === id);
+        return e && !isNaN(e.state) ? parseFloat(e.state) : null;
+      };
+
+      if (SENSOR_MAPPING.outside) {
+        setOutside({
+          temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
+          humidity: getNum(SENSOR_MAPPING.outside.humidity) || OUTSIDE_DATA.humidity,
+          pressure: 1013,
+          condition: 'Loaded'
+        });
+      }
+
+      setRooms(prevRooms => prevRooms.map(room => {
+        const map = SENSOR_MAPPING[room.id];
+        if (!map) return room;
+
+        const wSensor = states.find(s => s.entity_id === map.window);
+        const wOpen = wSensor ? wSensor.state === 'on' : false;
+        
+        let lastOpen = room.lastWindowOpen;
+        if (wOpen && wSensor) lastOpen = wSensor.last_changed;
+        else if (!wOpen) lastOpen = null;
+
+        return {
+          ...room,
+          temp: getNum(map.temp) || room.temp,
+          humidity: getNum(map.humidity) || room.humidity,
+          co2: map.co2 ? getNum(map.co2) : room.co2,
+          windowOpen: wOpen,
+          lastWindowOpen: lastOpen
+        };
+      }));
+
+    } catch (error) {
+      console.error("HA Fetch Error", error);
+      setConnectionStatus('error');
+      setErrorMessage('Verbindungsfehler');
+    }
+  };
+
+  const simulateDataChange = () => {
+    setRooms(prevRooms => prevRooms.map(room => {
+      const tempChange = (Math.random() - 0.5) * 0.4;
+      const humChange = Math.floor((Math.random() - 0.5) * 3);
+      const co2Change = room.hasCo2 ? Math.floor((Math.random() - 0.5) * 50) : null;
+      return {
+        ...room,
+        temp: Number((room.temp + tempChange).toFixed(1)),
+        humidity: Math.max(30, Math.min(99, room.humidity + humChange)),
+        co2: room.co2 ? Math.max(400, room.co2 + co2Change) : null
+      };
+    }));
+  };
+
+  const enableDemoMode = () => {
+      setIsDemoMode(true);
+      setConnectionStatus('connected');
+      simulateDataChange();
+  };
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
+  }, []); 
+
+  return { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh: fetchData, enableDemoMode };
+};
+
+// --- SETTINGS MODAL ---
+
+const SettingsModal = ({ settings, onSave, onClose }) => {
+  const [localSettings, setLocalSettings] = useState(settings);
+
+  const handleChange = (category, field, value) => {
+    setLocalSettings(prev => ({
+      ...prev,
+      [category]: {
+        ...prev[category],
+        [field]: Number(value)
+      }
+    }));
+  };
+
+  const handleReset = () => {
+    if(window.confirm('Möchtest du wirklich alle Werte auf Standard zurücksetzen?')) {
+      setLocalSettings(DEFAULT_COMFORT_RANGES);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+        <div className="p-6 pb-4 border-b border-slate-800 flex justify-between items-center">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <Settings size={20}/> Einstellungen
+          </h2>
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-800 text-slate-400">
+            <X size={20}/>
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-8">
+          {Object.entries(localSettings).map(([key, config]) => (
+            <div key={key} className="space-y-4">
+              <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider border-b border-slate-800 pb-2">
+                {config.label || key}
+              </h3>
+              
+              <div className="grid grid-cols-2 gap-4">
+                {/* Temperatur */}
+                <div className="space-y-2">
+                  <label className="text-xs text-slate-400 flex items-center gap-1"><Thermometer size={12}/> Temperatur Min/Max</label>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      value={config.tempMin} 
+                      onChange={(e) => handleChange(key, 'tempMin', e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white text-center focus:border-blue-500 outline-none"
+                    />
+                    <span className="text-slate-600">-</span>
+                    <input 
+                      type="number" 
+                      value={config.tempMax} 
+                      onChange={(e) => handleChange(key, 'tempMax', e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white text-center focus:border-blue-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Feuchtigkeit */}
+                <div className="space-y-2">
+                  <label className="text-xs text-slate-400 flex items-center gap-1"><Droplets size={12}/> Feuchtigkeit Min/Max</label>
+                  <div className="flex items-center gap-2">
+                    <input 
+                      type="number" 
+                      value={config.humMin} 
+                      onChange={(e) => handleChange(key, 'humMin', e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white text-center focus:border-blue-500 outline-none"
+                    />
+                    <span className="text-slate-600">-</span>
+                    <input 
+                      type="number" 
+                      value={config.humMax} 
+                      onChange={(e) => handleChange(key, 'humMax', e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white text-center focus:border-blue-500 outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="p-4 border-t border-slate-800 bg-slate-900/50 flex justify-between gap-4">
+          <button 
+            onClick={handleReset}
+            className="flex items-center gap-2 px-4 py-3 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          >
+            <RotateCcw size={18}/> Reset
+          </button>
+          <button 
+            onClick={() => onSave(localSettings)}
+            className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-blue-500 transition-colors shadow-lg shadow-blue-900/20"
+          >
+            <Save size={18}/> Speichern
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- WIDGET VIEW ---
+const WidgetView = ({ outside, rooms, refresh }) => {
+  const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
+  const openWindows = rooms.filter(r => r.windowOpen).length;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white p-4 flex flex-col justify-center items-center">
+        <div className="w-full max-w-xs space-y-4">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+                <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Klima Status</span>
+                <button onClick={refresh} className="p-1 rounded hover:bg-slate-800"><RefreshCw size={14}/></button>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+               <div className="bg-slate-900 p-4 rounded-2xl flex flex-col items-center border border-slate-800">
+                  <CloudRain size={24} className="text-blue-400 mb-2"/>
+                  <span className="text-3xl font-bold">{outside.temp}°</span>
+                  <span className="text-[10px] text-slate-500 uppercase mt-1">Außen</span>
+               </div>
+               <div className="bg-slate-900 p-4 rounded-2xl flex flex-col items-center border border-slate-800">
+                  <Home size={24} className="text-indigo-400 mb-2"/>
+                  <span className="text-3xl font-bold">{avgTemp}°</span>
+                  <span className="text-[10px] text-slate-500 uppercase mt-1">Ø Innen</span>
+               </div>
+            </div>
+            
+            <div 
+              className={`p-3 rounded-xl flex items-center justify-center gap-2 text-sm font-bold border transition-colors cursor-pointer hover:opacity-90 
+              ${openWindows > 0 ? 'bg-red-900/40 text-red-300 border-red-900/50' : 'bg-emerald-900/30 text-emerald-400 border-emerald-900/40'}`}
+              onClick={() => window.open('/', '_self')}
+            >
+                {openWindows > 0 ? <Wind size={18}/> : <CheckCircle size={18}/>}
+                {openWindows > 0 ? `${openWindows} Fenster offen!` : 'Alle Fenster zu'}
+            </div>
+        </div>
+    </div>
+  );
+}
+
+// --- ROOM COMPONENTS ---
+
+const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary' }) => {
   const themes = {
     primary: 'bg-slate-800 text-blue-200 border border-slate-700',
     secondary: 'bg-slate-800 text-indigo-200 border border-slate-700',
@@ -237,10 +485,7 @@ const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onC
   };
   
   return (
-    <div 
-      onClick={onClick}
-      className={`p-4 rounded-3xl flex flex-col justify-between h-28 ${themes[theme]} ${onClick ? 'cursor-pointer' : ''}`}
-    >
+    <div className={`p-4 rounded-3xl flex flex-col justify-between h-28 ${themes[theme]}`}>
       <div className="flex justify-between items-start">
         <Icon size={20} className="opacity-80"/>
         <span className="text-2xl font-semibold">{value}</span>
@@ -253,8 +498,8 @@ const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onC
   );
 };
 
-const RoomCardM3 = ({ room, outsideData, onClick }) => {
-  const analysis = useMemo(() => analyzeRoom(room, outsideData), [room, outsideData]);
+const RoomCardM3 = ({ room, outsideData, settings, onClick }) => {
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings), [room, outsideData, settings]);
   
   let containerClass = "bg-slate-800 border-slate-700";
   let scoreBadgeClass = "bg-emerald-900/50 text-emerald-400 border border-emerald-800";
@@ -317,9 +562,10 @@ const RoomCardM3 = ({ room, outsideData, onClick }) => {
   );
 };
 
-const M3Modal = ({ room, outsideData, onClose }) => {
+const M3Modal = ({ room, outsideData, settings, onClose }) => {
   if (!room) return null;
-  const analysis = useMemo(() => analyzeRoom(room, outsideData), [room, outsideData]);
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings), [room, outsideData, settings]);
+  const limits = settings[room.type] || settings.default;
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
@@ -346,13 +592,13 @@ const M3Modal = ({ room, outsideData, onClose }) => {
              <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
                 <div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Thermometer size={14}/> Temperatur</div>
                 <div className="text-2xl font-medium text-white">{room.temp}°C</div>
-                <div className="text-[10px] text-slate-500 mt-1">Ziel: {COMFORT_RANGES[room.type]?.tempMin}-{COMFORT_RANGES[room.type]?.tempMax}°</div>
+                <div className="text-[10px] text-slate-500 mt-1">Ziel: {limits.tempMin}-{limits.tempMax}°</div>
              </div>
              
              <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
                 <div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Droplets size={14}/> Feuchte</div>
                 <div className="text-2xl font-medium text-white">{room.humidity}%</div>
-                <div className="text-[10px] text-slate-500 mt-1">Taupunkt: {analysis.dewPoint}°</div>
+                <div className="text-[10px] text-slate-500 mt-1">Ziel: {limits.humMin}-{limits.humMax}%</div>
              </div>
 
              {room.hasCo2 && (
@@ -455,7 +701,6 @@ const WindowListModal = ({ rooms, onClose }) => {
 // --- MAIN APP COMPONENT ---
 
 export default function App() {
-  // STATE DEFINITIONS - WICHTIG: showWindowModal ist hier definiert!
   const [rooms, setRooms] = useState(INITIAL_ROOMS);
   const [outside, setOutside] = useState(OUTSIDE_DATA);
   const [isDemoMode, setIsDemoMode] = useState(true);
@@ -463,29 +708,41 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState('');
   
   const [selectedRoom, setSelectedRoom] = useState(null);
-  const [showWindowModal, setShowWindowModal] = useState(false); // Hier ist die fehlende Definition
+  const [showWindowModal, setShowWindowModal] = useState(false);
+  const [showSettings, setShowSettings] = useState(false); // NEU: Settings Modal State
   const [installPrompt, setInstallPrompt] = useState(null);
   
   const [notifiedSessions, setNotifiedSessions] = useState(new Set());
   const [notifyPerm, setNotifyPerm] = useState('default');
 
-  // Home Assistant Logic
+  // NEU: Comfort Settings mit Persistenz
+  const [comfortSettings, setComfortSettings] = useState(() => {
+    const saved = localStorage.getItem('comfortSettings');
+    return saved ? JSON.parse(saved) : DEFAULT_COMFORT_RANGES;
+  });
+
+  const handleSaveSettings = (newSettings) => {
+    setComfortSettings(newSettings);
+    localStorage.setItem('comfortSettings', JSON.stringify(newSettings));
+    setShowSettings(false);
+  };
+
+  const isWidgetMode = useMemo(() => {
+    return new URLSearchParams(window.location.search).get('view') === 'widget';
+  }, []);
+
+  const { refresh, enableDemoMode } = useHomeAssistant();
+
+  // Custom data fetching hook logic merged here to avoid duplication for this file response
   useEffect(() => {
     const fetchData = async () => {
       if (!HA_URL || !HA_TOKEN) {
         setIsDemoMode(true);
         setRooms(prev => prev.map(r => ({
            ...r,
-           temp: Number((r.temp + (Math.random() - 0.5) * 0.4).toFixed(1))
+           temp: Number((r.temp + (Math.random() - 0.5) * 0.1).toFixed(1))
         })));
         return;
-      }
-
-      // Check HTTPS/HTTP
-      if (window.location.protocol === 'https:' && HA_URL.startsWith('http://')) {
-          setConnectionStatus('error');
-          setErrorMessage('HTTPS/HTTP Konflikt. Bitte Nabu Casa URL nutzen.');
-          return;
       }
 
       try {
@@ -505,7 +762,6 @@ export default function App() {
           return e && !isNaN(e.state) ? parseFloat(e.state) : null;
         };
 
-        // Update Outside
         if (SENSOR_MAPPING.outside) {
           setOutside({
             temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
@@ -515,7 +771,6 @@ export default function App() {
           });
         }
 
-        // Update Rooms
         setRooms(prevRooms => prevRooms.map(room => {
           const map = SENSOR_MAPPING[room.id];
           if (!map) return room;
@@ -540,23 +795,21 @@ export default function App() {
       } catch (error) {
         console.error("HA Fetch Error", error);
         setConnectionStatus('error');
-        setErrorMessage('Verbindungsfehler (CORS?)');
+        setErrorMessage('Verbindungsfehler');
       }
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 10000);
+    const interval = setInterval(fetchData, isWidgetMode ? 60000 : 10000);
     return () => clearInterval(interval);
-  }, []); // Run on mount
+  }, [isWidgetMode]);
 
-  // Notification Permission Check
   useEffect(() => {
     if ('Notification' in window) {
       setNotifyPerm(Notification.permission);
     }
   }, []);
 
-  // Send Notification Helper
   const sendNotification = (title, options) => {
     if (Notification.permission !== 'granted') return;
     
@@ -580,24 +833,43 @@ export default function App() {
     }
   };
 
-  // Check Logic
   useEffect(() => {
     if (notifyPerm !== 'granted') return;
 
     rooms.forEach(room => {
       if (!room.windowOpen || !room.lastWindowOpen) return;
 
-      const analysis = analyzeRoom(room, outside);
+      // Übergebe hier comfortSettings an analyzeRoom
+      const limits = comfortSettings[room.type] || comfortSettings.default;
+      const analysis = analyzeRoom(room, outside, comfortSettings);
       const targetMin = getTargetVentilationTime(outside.temp);
       const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
       const openMin = diffMs / 60000;
       const remaining = targetMin - openMin;
       
       const sessionBase = `${room.id}-${room.lastWindowOpen}`;
+      const startKey = `${sessionBase}-start`;
+      const coldKey = `${sessionBase}-cold`;
       const timerKey = `${sessionBase}-timer`;
       const qualityKey = `${sessionBase}-quality`;
 
-      // 1. Time Expired
+      if (!notifiedSessions.has(startKey)) {
+         sendNotification(`Lüftung gestartet: ${room.name}`, {
+            body: `Timer gesetzt auf ${targetMin} Minuten.`,
+            tag: startKey
+         });
+         setNotifiedSessions(prev => new Set(prev).add(startKey));
+      }
+
+      if (room.temp < limits.tempMin && !notifiedSessions.has(coldKey)) {
+         sendNotification(`Achtung Kälte: ${room.name}`, {
+            body: `Temperatur ist auf ${room.temp}°C gefallen. Fenster schließen!`,
+            tag: coldKey,
+            icon: '/pwa-192x192.png'
+         });
+         setNotifiedSessions(prev => new Set(prev).add(coldKey));
+      }
+
       if (remaining <= 0 && !notifiedSessions.has(timerKey)) {
          sendNotification(`Fenster schließen: ${room.name}`, {
             body: `Zeit abgelaufen (${targetMin} Min).`,
@@ -606,7 +878,6 @@ export default function App() {
          setNotifiedSessions(prev => new Set(prev).add(timerKey));
       }
 
-      // 2. Air Quality Good
       const issues = analysis.issues;
       const hasIssues = issues.some(i => i.type === 'hum' && i.status === 'high' || i.type === 'co2');
       
@@ -618,7 +889,7 @@ export default function App() {
          setNotifiedSessions(prev => new Set(prev).add(qualityKey));
       }
     });
-  }, [rooms, outside, notifiedSessions, notifyPerm]);
+  }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings]);
 
   // Install Prompt Logic
   useEffect(() => {
@@ -640,6 +911,14 @@ export default function App() {
     setNotifyPerm(res);
     if (res === 'granted') sendNotification('Test', { body: 'Benachrichtigungen aktiv' });
   };
+
+  const testNotification = () => {
+    sendNotification('Test-Alarm', { body: 'Dies ist eine Test-Benachrichtigung.' });
+  };
+
+  if (isWidgetMode) {
+    return <WidgetView outside={outside} rooms={rooms} refresh={() => window.location.reload()} />;
+  }
 
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
   const openWindows = rooms.filter(r => r.windowOpen).length;
@@ -665,21 +944,31 @@ export default function App() {
             </div>
             
             <div className="flex gap-2">
-              {/* Notif Button */}
               {'Notification' in window && (
                 <button 
-                  onClick={notifyPerm === 'granted' ? () => sendNotification('Test', {body:'Test OK'}) : requestNotifications} 
+                  onClick={notifyPerm === 'granted' ? testNotification : requestNotifications} 
                   className={`p-3 rounded-full border transition-colors ${notifyPerm === 'granted' ? 'bg-emerald-900/30 border-emerald-800 text-emerald-400' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
                 >
-                  {notifyPerm === 'granted' ? <Bell size={20} /> : <BellOff size={20} />}
+                  {notifyPerm === 'granted' ? <BellRing size={20} /> : <BellOff size={20} />}
                 </button>
               )}
               
+              {/* NEU: Einstellungen Button */}
+              <button 
+                onClick={() => setShowSettings(true)}
+                className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700"
+              >
+                <Settings size={20} />
+              </button>
+
               {installPrompt && (
                 <button onClick={handleInstallClick} className="bg-blue-600 text-white p-3 rounded-full shadow-lg">
                   <Download size={20} />
                 </button>
               )}
+              <button onClick={refresh} className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700">
+                <RefreshCw size={20} className={connectionStatus === 'loading' ? 'animate-spin' : ''}/>
+              </button>
             </div>
           </div>
 
@@ -734,6 +1023,7 @@ export default function App() {
               key={room.id} 
               room={room} 
               outsideData={outside}
+              settings={comfortSettings} // Settings übergeben
               onClick={() => setSelectedRoom(room)}
             />
           ))}
@@ -744,6 +1034,7 @@ export default function App() {
           <M3Modal 
             room={selectedRoom} 
             outsideData={outside}
+            settings={comfortSettings} // Settings übergeben
             onClose={() => setSelectedRoom(null)}
           />
         )}
@@ -752,6 +1043,15 @@ export default function App() {
           <WindowListModal 
              rooms={rooms}
              onClose={() => setShowWindowModal(false)}
+          />
+        )}
+
+        {/* NEU: Settings Modal */}
+        {showSettings && (
+          <SettingsModal 
+            settings={comfortSettings}
+            onSave={handleSaveSettings}
+            onClose={() => setShowSettings(false)}
           />
         )}
 
