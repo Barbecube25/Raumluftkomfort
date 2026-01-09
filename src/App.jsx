@@ -58,14 +58,14 @@ const CLIMATE_MAPPING = {
 };
 
 const ROOM_CONNECTIONS = {
-  living: ['dining', 'hallway'],
-  kitchen: ['dining', 'hallway'],
-  dining: ['living', 'kitchen', 'hallway'],
-  hallway: ['living', 'dining', 'kitchen', 'bedroom', 'kids', 'play', 'bath'],
+  living: ['dining'],
+  kitchen: ['dining'], // Tür zum Flur geschlossen (Katzen)
+  dining: ['living', 'kitchen', 'bath'],
+  hallway: ['bedroom', 'play'], // Küche entfernt
   bedroom: ['hallway'],
-  kids: ['play', 'hallway'],
+  kids: ['play'],
   play: ['kids', 'hallway'],
-  bath: ['hallway'],
+  bath: ['dining'],
   basement: [] 
 };
 
@@ -541,7 +541,7 @@ const HeatingControlModal = ({ rooms, setTemperature, onClose }) => {
                 
                 <div className="flex items-center gap-3 bg-slate-900 p-1.5 rounded-xl border border-slate-700">
                   <button 
-                    onClick={() => setTemperature(room.climateEntity, (room.targetTemp || 20) - 0.5)}
+                    onClick={() => setTemperature(room.climateEntity, (room.targetTemp || 20) - 1)}
                     className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors"
                   >
                     <Minus size={16}/>
@@ -550,7 +550,7 @@ const HeatingControlModal = ({ rooms, setTemperature, onClose }) => {
                     {room.targetTemp ? room.targetTemp.toFixed(1) : '--'}°
                   </div>
                   <button 
-                    onClick={() => setTemperature(room.climateEntity, (room.targetTemp || 20) + 0.5)}
+                    onClick={() => setTemperature(room.climateEntity, (room.targetTemp || 20) + 1)}
                     className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors"
                   >
                     <Plus size={16}/>
