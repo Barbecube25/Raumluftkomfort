@@ -23,7 +23,10 @@ import {
   Settings,
   Save, 
   RotateCcw,
-  ArrowRightLeft // Neu: Icon für Querlüften
+  ArrowRightLeft,
+  Flame, // Neu: Heizungs-Icon
+  Minus,
+  Plus
 } from 'lucide-react';
 
 // --- KONFIGURATION & UMGEBUNGSVARIABLEN ---
@@ -40,18 +43,30 @@ const env = getEnv();
 const HA_URL = env.VITE_HA_URL || ""; 
 const HA_TOKEN = env.VITE_HA_TOKEN || "";
 
-// NEU: Definition der Raum-Verbindungen für Querlüftungs-Erkennung
-// Trage hier ein, welche Räume direkt miteinander verbunden sind (Türen/Durchgänge)
+// NEU: Mapping für Heizungsthermostate (Climate Entities)
+// Bitte prüfe diese Entitäten in deinem Home Assistant! (meist climate. statt sensor.)
+const CLIMATE_MAPPING = {
+  living: 'climate.thermostat_x_wohnzimmer', 
+  bedroom: 'climate.thermostat_x_schlafzimmer',
+  kids: 'climate.thermostat_x_kinderzimmer',
+  play: 'climate.thermostat_x_spielzimmer',
+  bath: 'climate.thermostat_x_bad',
+  dining: 'climate.thermostat_x_esszimmer',
+  // Küche und Keller haben evtl. keine smarte Heizung? Falls doch, hier ergänzen.
+  kitchen: '', 
+  basement: ''
+};
+
 const ROOM_CONNECTIONS = {
-  living: ['dining', 'hallway'], // Keine Tür zum Esszimmer, Tür zum Flur
-  kitchen: ['dining', 'hallway'], // Tür zum Esszimmer (meist offen), Tür zum Flur
-  dining: ['living', 'kitchen', 'hallway'], // Verbindung zu Wohnen & Küche & Flur
-  hallway: ['living', 'dining', 'kitchen', 'bedroom', 'kids', 'play', 'bath'], // Zentraler Verteiler
+  living: ['dining', 'hallway'],
+  kitchen: ['dining', 'hallway'],
+  dining: ['living', 'kitchen', 'hallway'],
+  hallway: ['living', 'dining', 'kitchen', 'bedroom', 'kids', 'play', 'bath'],
   bedroom: ['hallway'],
-  kids: ['play', 'hallway'], // Tür zum Spielzimmer (immer offen), Tür zum Flur
-  play: ['kids', 'hallway'], // Tür zum Kinderzimmer (immer offen), Tür zum Flur
+  kids: ['play', 'hallway'],
+  play: ['kids', 'hallway'],
   bath: ['hallway'],
-  basement: [] // Keller isoliert
+  basement: [] 
 };
 
 const SENSOR_MAPPING = {
@@ -109,14 +124,14 @@ const DEFAULT_COMFORT_RANGES = {
 };
 
 const INITIAL_ROOMS = [
-  { id: 'living', name: 'Wohnzimmer', type: 'living', hasCo2: true, hasWindow: true, hasVentilation: false, temp: 21.5, humidity: 45, co2: 650, windowOpen: false, lastWindowOpen: null },
-  { id: 'kitchen', name: 'Küche', type: 'living', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 22.1, humidity: 68, co2: null, windowOpen: true, lastWindowOpen: null }, 
-  { id: 'bedroom', name: 'Schlafzimmer', type: 'sleeping', hasCo2: true, hasWindow: true, hasVentilation: true, temp: 18.0, humidity: 50, co2: 900, windowOpen: false, lastWindowOpen: null },
-  { id: 'kids', name: 'Kinderzimmer', type: 'sleeping', hasCo2: false, hasWindow: true, hasVentilation: true, temp: 20.5, humidity: 55, co2: null, windowOpen: false, lastWindowOpen: null },
-  { id: 'play', name: 'Spielzimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.0, humidity: 48, co2: null, windowOpen: null, lastWindowOpen: null },
-  { id: 'bath', name: 'Bad', type: 'bathroom', hasCo2: false, hasWindow: true, hasVentilation: true, temp: 23.5, humidity: 82, co2: null, windowOpen: false, lastWindowOpen: null },
-  { id: 'dining', name: 'Esszimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.2, humidity: 46, co2: null, windowOpen: null, lastWindowOpen: null },
-  { id: 'basement', name: 'Keller', type: 'storage', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 14.0, humidity: 60, co2: null, windowOpen: false, lastWindowOpen: null },
+  { id: 'living', name: 'Wohnzimmer', type: 'living', hasCo2: true, hasWindow: true, hasVentilation: false, temp: 21.5, humidity: 45, co2: 650, windowOpen: false, lastWindowOpen: null, targetTemp: 21 },
+  { id: 'kitchen', name: 'Küche', type: 'living', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 22.1, humidity: 68, co2: null, windowOpen: true, lastWindowOpen: null, targetTemp: null }, 
+  { id: 'bedroom', name: 'Schlafzimmer', type: 'sleeping', hasCo2: true, hasWindow: true, hasVentilation: true, temp: 18.0, humidity: 50, co2: 900, windowOpen: false, lastWindowOpen: null, targetTemp: 18 },
+  { id: 'kids', name: 'Kinderzimmer', type: 'sleeping', hasCo2: false, hasWindow: true, hasVentilation: true, temp: 20.5, humidity: 55, co2: null, windowOpen: false, lastWindowOpen: null, targetTemp: 20 },
+  { id: 'play', name: 'Spielzimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.0, humidity: 48, co2: null, windowOpen: null, lastWindowOpen: null, targetTemp: 21 },
+  { id: 'bath', name: 'Bad', type: 'bathroom', hasCo2: false, hasWindow: true, hasVentilation: true, temp: 23.5, humidity: 82, co2: null, windowOpen: false, lastWindowOpen: null, targetTemp: 23 },
+  { id: 'dining', name: 'Esszimmer', type: 'living', hasCo2: false, hasWindow: false, hasVentilation: false, temp: 21.2, humidity: 46, co2: null, windowOpen: null, lastWindowOpen: null, targetTemp: 21 },
+  { id: 'basement', name: 'Keller', type: 'storage', hasCo2: false, hasWindow: true, hasVentilation: false, temp: 14.0, humidity: 60, co2: null, windowOpen: false, lastWindowOpen: null, targetTemp: null },
 ];
 
 const OUTSIDE_DATA = {
@@ -155,14 +170,12 @@ const formatTimeAgo = (dateString) => {
   return '>1d';
 };
 
-// Analyse mit Querlüftungs-Logik
 const analyzeRoom = (room, outside, settings, allRooms) => {
   const limits = settings[room.type] || settings.default;
   let score = 100;
   let issues = [];
   let recommendations = [];
 
-  // Querlüftung prüfen
   const neighbors = ROOM_CONNECTIONS[room.id] || [];
   const crossVentilationRoom = neighbors.find(nId => {
     const neighbor = allRooms.find(r => r.id === nId);
@@ -171,13 +184,11 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
   
   const isCrossVentilating = room.windowOpen && !!crossVentilationRoom;
   
-  // Timer Berechnung: Bei Querlüftung halbe Zeit
   let targetMin = getTargetVentilationTime(outside.temp);
   if (isCrossVentilating) targetMin = Math.ceil(targetMin / 2);
   
   const ventDurationText = `${targetMin} Min`;
 
-  // Temp Check
   if (room.temp < limits.tempMin) {
     score -= 20;
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
@@ -188,7 +199,6 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
     recommendations.push('Heizung runterdrehen');
   }
 
-  // Humidity Check
   const dewPointInside = calculateDewPoint(room.temp, room.humidity);
   const dewPointOutside = calculateDewPoint(outside.temp, outside.humidity);
 
@@ -211,7 +221,6 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
                 recommendations.push(`Querlüften aktiv: Noch ${remaining} Min.`);
              } else {
                 recommendations.push(`Noch ${remaining} Min. lüften`);
-                // Tipp für Querlüftung geben, wenn möglich
                 const potentialCross = neighbors.find(nId => {
                     const n = allRooms.find(r => r.id === nId);
                     return n && n.hasWindow && !n.windowOpen;
@@ -235,7 +244,6 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
     }
   }
 
-  // CO2 Check
   if (room.hasCo2 && room.co2) {
     if (room.co2 > 1000) {
        const isCrit = room.co2 >= 1500;
@@ -268,7 +276,7 @@ const analyzeRoom = (room, outside, settings, allRooms) => {
     issues,
     recommendations,
     dewPoint: dewPointInside.toFixed(1),
-    isCrossVentilating // Flag für UI
+    isCrossVentilating
   };
 };
 
@@ -305,6 +313,11 @@ const useHomeAssistant = () => {
         return e && !isNaN(e.state) ? parseFloat(e.state) : null;
       };
 
+      const getAttr = (id, attr) => {
+        const e = states.find(s => s.entity_id === id);
+        return e ? e.attributes[attr] : null;
+      };
+
       if (SENSOR_MAPPING.outside) {
         setOutside({
           temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
@@ -316,6 +329,8 @@ const useHomeAssistant = () => {
 
       setRooms(prevRooms => prevRooms.map(room => {
         const map = SENSOR_MAPPING[room.id];
+        const climateEntity = CLIMATE_MAPPING[room.id];
+        
         if (!map) return room;
 
         const wSensor = states.find(s => s.entity_id === map.window);
@@ -325,13 +340,22 @@ const useHomeAssistant = () => {
         if (wOpen && wSensor) lastOpen = wSensor.last_changed;
         else if (!wOpen) lastOpen = null;
 
+        // Hole Zieltemperatur vom Thermostat, falls vorhanden
+        let targetTemp = room.targetTemp;
+        if (climateEntity) {
+           const t = getAttr(climateEntity, 'temperature');
+           if (t) targetTemp = t;
+        }
+
         return {
           ...room,
           temp: getNum(map.temp) || room.temp,
           humidity: getNum(map.humidity) || room.humidity,
           co2: map.co2 ? getNum(map.co2) : room.co2,
           windowOpen: wOpen,
-          lastWindowOpen: lastOpen
+          lastWindowOpen: lastOpen,
+          targetTemp: targetTemp,
+          climateEntity: climateEntity
         };
       }));
 
@@ -339,6 +363,27 @@ const useHomeAssistant = () => {
       console.error("HA Fetch Error", error);
       setConnectionStatus('error');
       setErrorMessage('Verbindungsfehler');
+    }
+  };
+
+  // Funktion zum Setzen der Temperatur
+  const setTemperature = async (entityId, newTemp) => {
+    if (isDemoMode) {
+      setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, targetTemp: newTemp} : r));
+      return;
+    }
+
+    try {
+      await fetch(`${HA_URL}/api/services/climate/set_temperature`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entity_id: entityId, temperature: newTemp })
+      });
+      // Optimistisches Update im UI
+      setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, targetTemp: newTemp} : r));
+    } catch (e) {
+      console.error("Set Temp Error", e);
+      alert("Fehler beim Senden an Home Assistant");
     }
   };
 
@@ -368,11 +413,10 @@ const useHomeAssistant = () => {
     return () => clearInterval(interval);
   }, []); 
 
-  return { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh: fetchData, enableDemoMode };
+  return { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh: fetchData, enableDemoMode, setTemperature };
 };
 
-// --- SETTINGS MODAL ---
-
+// --- SETTINGS MODAL (Gleich geblieben, nur importiert) ---
 const SettingsModal = ({ settings, onSave, onClose }) => {
   const [localSettings, setLocalSettings] = useState(settings);
 
@@ -465,6 +509,68 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
   );
 };
 
+// --- HEATING CONTROL MODAL (NEU) ---
+const HeatingControlModal = ({ rooms, setTemperature, onClose }) => {
+  // Filtere Räume, die eine Heizung (climateEntity) haben
+  const heatedRooms = rooms.filter(r => r.climateEntity);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+        <div className="p-6 pb-4 border-b border-slate-800 flex justify-between items-center">
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <Flame size={20} className="text-orange-500"/> Heizungssteuerung
+          </h2>
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-800 text-slate-400">
+            <X size={20}/>
+          </button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-4">
+          {heatedRooms.length === 0 ? (
+            <div className="text-center text-slate-500 py-8">Keine steuerbaren Heizungen gefunden.</div>
+          ) : (
+            heatedRooms.map(room => (
+              <div key={room.id} className="bg-slate-800/50 p-4 rounded-2xl flex justify-between items-center border border-slate-700">
+                <div>
+                  <div className="font-bold text-white">{room.name}</div>
+                  <div className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                    Ist: {room.temp}°C
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3 bg-slate-900 p-1.5 rounded-xl border border-slate-700">
+                  <button 
+                    onClick={() => setTemperature(room.climateEntity, (room.targetTemp || 20) - 0.5)}
+                    className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors"
+                  >
+                    <Minus size={16}/>
+                  </button>
+                  <div className="w-12 text-center font-bold text-lg text-orange-400">
+                    {room.targetTemp ? room.targetTemp.toFixed(1) : '--'}°
+                  </div>
+                  <button 
+                    onClick={() => setTemperature(room.climateEntity, (room.targetTemp || 20) + 0.5)}
+                    className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 transition-colors"
+                  >
+                    <Plus size={16}/>
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+        
+        <div className="p-4 border-t border-slate-800 bg-slate-900/50 text-center">
+           <button onClick={onClose} className="px-8 py-2 rounded-full bg-slate-700 text-slate-200 font-medium hover:bg-slate-600 transition-colors">
+             Fertig
+           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- WIDGET VIEW ---
 const WidgetView = ({ outside, rooms, refresh }) => {
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
@@ -515,7 +621,10 @@ const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onC
   };
   
   return (
-    <div className={`p-4 rounded-3xl flex flex-col justify-between h-28 ${themes[theme]}`}>
+    <div 
+      onClick={onClick}
+      className={`p-4 rounded-3xl flex flex-col justify-between h-28 ${themes[theme]} ${onClick ? 'cursor-pointer hover:shadow-lg transition-shadow' : ''}`}
+    >
       <div className="flex justify-between items-start">
         <Icon size={20} className="opacity-80"/>
         <span className="text-2xl font-semibold">{value}</span>
@@ -685,6 +794,51 @@ const M3Modal = ({ room, outsideData, settings, allRooms, onClose }) => {
   );
 };
 
+const WindowListModal = ({ rooms, onClose }) => {
+  const openWindows = rooms.filter(r => r.windowOpen);
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 p-6">
+        <div className="flex justify-between items-center mb-4">
+           <h3 className="text-xl font-normal text-white">Fensterstatus</h3>
+           <button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300">
+             <X size={20}/>
+           </button>
+        </div>
+        
+        <div className="space-y-3">
+          {openWindows.length > 0 ? (
+            openWindows.map(room => (
+              <div key={room.id} className="flex items-center gap-3 p-4 bg-slate-800 text-blue-200 rounded-2xl border border-slate-700">
+                 <div className="bg-blue-900/30 p-2 rounded-full text-blue-400">
+                    <Wind size={20}/>
+                 </div>
+                 <div>
+                   <span className="font-medium block text-white">{room.name}</span>
+                   <span className="text-xs opacity-70">Fenster geöffnet</span>
+                 </div>
+              </div>
+            ))
+          ) : (
+             <div className="flex flex-col items-center py-8 text-emerald-400 bg-emerald-900/20 rounded-2xl border border-emerald-900/30">
+                <CheckCircle size={40} className="mb-3 opacity-80"/>
+                <span className="font-medium text-lg">Alle geschlossen</span>
+                <span className="text-sm opacity-70">Kein Fenster ist aktuell geöffnet</span>
+             </div>
+          )}
+        </div>
+        
+        <div className="mt-6 flex justify-end">
+           <button onClick={onClose} className="px-5 py-2 rounded-full bg-slate-700 text-white text-sm font-medium hover:bg-slate-600 transition-colors">
+             Schließen
+           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- MAIN APP COMPONENT ---
 
 export default function App() {
@@ -697,6 +851,7 @@ export default function App() {
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [showWindowModal, setShowWindowModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showHeatingModal, setShowHeatingModal] = useState(false); // NEU: Heating Modal State
   const [installPrompt, setInstallPrompt] = useState(null);
   
   const [notifiedSessions, setNotifiedSessions] = useState(new Set());
@@ -717,7 +872,7 @@ export default function App() {
     return new URLSearchParams(window.location.search).get('view') === 'widget';
   }, []);
 
-  const { refresh, enableDemoMode } = useHomeAssistant();
+  const { refresh, enableDemoMode, setTemperature } = useHomeAssistant();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -747,6 +902,11 @@ export default function App() {
           return e && !isNaN(e.state) ? parseFloat(e.state) : null;
         };
 
+        const getAttr = (id, attr) => {
+          const e = states.find(s => s.entity_id === id);
+          return e ? e.attributes[attr] : null;
+        };
+
         if (SENSOR_MAPPING.outside) {
           setOutside({
             temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
@@ -758,6 +918,8 @@ export default function App() {
 
         setRooms(prevRooms => prevRooms.map(room => {
           const map = SENSOR_MAPPING[room.id];
+          const climateEntity = CLIMATE_MAPPING[room.id];
+          
           if (!map) return room;
 
           const wSensor = states.find(s => s.entity_id === map.window);
@@ -767,13 +929,22 @@ export default function App() {
           if (wOpen && wSensor) lastOpen = wSensor.last_changed;
           else if (!wOpen) lastOpen = null;
 
+          // Hole Zieltemperatur vom Thermostat, falls vorhanden
+          let targetTemp = room.targetTemp;
+          if (climateEntity) {
+             const t = getAttr(climateEntity, 'temperature');
+             if (t) targetTemp = t;
+          }
+
           return {
             ...room,
             temp: getNum(map.temp) || room.temp,
             humidity: getNum(map.humidity) || room.humidity,
             co2: map.co2 ? getNum(map.co2) : room.co2,
             windowOpen: wOpen,
-            lastWindowOpen: lastOpen
+            lastWindowOpen: lastOpen,
+            targetTemp: targetTemp,
+            climateEntity: climateEntity
           };
         }));
 
@@ -825,13 +996,11 @@ export default function App() {
       if (!room.windowOpen || !room.lastWindowOpen) return;
 
       const limits = comfortSettings[room.type] || comfortSettings.default;
-      const analysis = analyzeRoom(room, outside, comfortSettings, rooms); // rooms übergeben
+      const analysis = analyzeRoom(room, outside, comfortSettings, rooms); 
       const targetMin = getTargetVentilationTime(outside.temp);
       const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
       const openMin = diffMs / 60000;
       
-      // Nutze die berechnete Zeit aus der Analyse (ggf. halbiert wegen Querlüften)
-      // Um das exakt zu machen, können wir auch direkt auf isCrossVentilating prüfen
       let adjustedTarget = targetMin;
       if (analysis.isCrossVentilating) adjustedTarget = Math.ceil(targetMin / 2);
       
@@ -986,6 +1155,7 @@ export default function App() {
             value={`${avgTemp}°`} 
             subValue="Temperatur"
             theme="secondary"
+            onClick={() => setShowHeatingModal(true)} // Öffnet Heizungs-Modal
           />
            <M3StatCard 
             icon={Wind} 
@@ -1012,7 +1182,7 @@ export default function App() {
               room={room} 
               outsideData={outside}
               settings={comfortSettings}
-              allRooms={rooms} // WICHTIG: rooms übergeben für Querlüftungs-Check
+              allRooms={rooms}
               onClick={() => setSelectedRoom(room)}
             />
           ))}
@@ -1041,6 +1211,14 @@ export default function App() {
             settings={comfortSettings}
             onSave={handleSaveSettings}
             onClose={() => setShowSettings(false)}
+          />
+        )}
+
+        {showHeatingModal && (
+          <HeatingControlModal 
+            rooms={rooms}
+            setTemperature={setTemperature}
+            onClose={() => setShowHeatingModal(false)}
           />
         )}
 
