@@ -229,6 +229,7 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
   
   const ventDurationText = `${totalTargetMin} Min`;
 
+  // Temp Check
   if (room.temp < limits.tempMin) {
     score -= 20;
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
@@ -383,6 +384,11 @@ const useHomeAssistant = () => {
       const getNum = (id) => {
         const e = states.find(s => s.entity_id === id);
         return e && !isNaN(e.state) ? parseFloat(e.state) : null;
+      };
+
+      const getAttr = (id, attr) => {
+        const e = states.find(s => s.entity_id === id);
+        return e ? e.attributes[attr] : null;
       };
 
       if (SENSOR_MAPPING.outside) {
@@ -1300,106 +1306,123 @@ export default function App() {
     if (notifyPerm !== 'granted') return;
 
     rooms.forEach(room => {
-      // Wir kümmern uns nur um offene Fenster
-      if (!room.windowOpen || !room.lastWindowOpen) {
-          // Falls Fenster zu, könnten wir die Notification löschen, aber das ist komplex ohne Service Worker ID
-          return;
-      }
-
       const limits = comfortSettings[room.type] || comfortSettings.default;
       const analysis = analyzeRoom(room, outside, comfortSettings, rooms, timerExtensions); 
-      
-      const targetMin = getTargetVentilationTime(outside.temp);
-      let adjustedTarget = targetMin;
-      if (analysis.isCrossVentilating) adjustedTarget = Math.ceil(targetMin / 2);
-      
-      const sessionBase = `${room.id}-${room.lastWindowOpen}`;
-      const extensionMin = timerExtensions[sessionBase] || 0;
-      const totalTargetMin = adjustedTarget + extensionMin;
-      
-      const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
-      const openMin = diffMs / 60000;
-      const remaining = Math.ceil(totalTargetMin - openMin);
-      
-      // AUTO-EXTENSION LOGIC (Ohne Notification Spam)
-      if (remaining <= 0) {
-          const hasIssues = analysis.issues.some(i => (i.type === 'hum' && i.status === 'high') || i.type === 'co2');
+
+      // --- 1. Kritische Luftqualität (Unabhängig vom Fensterstatus) ---
+      if (analysis.score <= 50) { 
+          // Key ändert sich stündlich -> max 1 Nachricht pro Stunde pro Raum
+          const datePart = new Date().toLocaleDateString();
+          const hourPart = new Date().getHours();
+          const badAirKey = `${room.id}-critical-${datePart}-${hourPart}`;
+
+          if (!notifiedSessions.has(badAirKey)) {
+             const mainIssue = analysis.issues[0]?.msg || 'Werte kritisch';
+             const recommendation = analysis.recommendations[0] || 'Bitte prüfen';
+             
+             sendNotification(`Kritische Luft: ${room.name}`, {
+                body: `${mainIssue}. ${recommendation}`,
+                tag: badAirKey,
+                icon: '/pwa-192x192.png',
+                vibrate: [200, 100, 200] // Bei kritischem Zustand vibrieren
+             });
+             setNotifiedSessions(prev => new Set(prev).add(badAirKey));
+          }
+      }
+
+      // --- 2. Fenster-Offen Logik (Timer, Kälte etc.) ---
+      if (room.windowOpen && room.lastWindowOpen) {
+          const targetMin = getTargetVentilationTime(outside.temp);
+          let adjustedTarget = targetMin;
+          if (analysis.isCrossVentilating) adjustedTarget = Math.ceil(targetMin / 2);
           
-          // Wenn Luft noch schlecht und wir noch nicht max. verlängert haben -> Verlängern
-          if (hasIssues && extensionMin < 30) {
-              const newExtension = extensionMin + 5;
-              const extKey = `${sessionBase}-ext-${newExtension}`;
+          const sessionBase = `${room.id}-${room.lastWindowOpen}`;
+          const extensionMin = timerExtensions[sessionBase] || 0;
+          const totalTargetMin = adjustedTarget + extensionMin;
+          
+          const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
+          const openMin = diffMs / 60000;
+          const remaining = Math.ceil(totalTargetMin - openMin);
+          
+          // AUTO-EXTENSION LOGIC (Ohne Notification Spam)
+          if (remaining <= 0) {
+              const hasIssues = analysis.issues.some(i => (i.type === 'hum' && i.status === 'high') || i.type === 'co2');
               
-              if (!notifiedSessions.has(extKey)) {
-                  setTimerExtensions(prev => ({...prev, [sessionBase]: newExtension}));
-                  setNotifiedSessions(prev => new Set(prev).add(extKey));
-                  // Return here, effect will re-run with new time immediately
-                  return; 
+              // Wenn Luft noch schlecht und wir noch nicht max. verlängert haben -> Verlängern
+              if (hasIssues && extensionMin < 30) {
+                  const newExtension = extensionMin + 5;
+                  const extKey = `${sessionBase}-ext-${newExtension}`;
+                  
+                  if (!notifiedSessions.has(extKey)) {
+                      setTimerExtensions(prev => ({...prev, [sessionBase]: newExtension}));
+                      setNotifiedSessions(prev => new Set(prev).add(extKey));
+                      // Return here, effect will re-run with new time immediately
+                      return; 
+                  }
               }
           }
-      }
 
-      // --- STATUS TEXT BAUEN ---
-      let title = `Lüften: ${room.name}`;
-      let statusIcon = "⏳";
-      let statusText = `Noch ${Math.max(0, remaining)} Min.`;
-      let reasonText = "";
-      
-      // Probleme identifizieren für den Text
-      const humIssue = analysis.issues.find(i => i.type === 'hum');
-      const co2Issue = analysis.issues.find(i => i.type === 'co2');
-      
-      if (co2Issue) reasonText += `CO2 hoch (${room.co2}) `;
-      if (humIssue) reasonText += `Feuchte hoch (${room.humidity}%) `;
-      if (!co2Issue && !humIssue) reasonText = "Luftqualität gut ✅";
-
-      // Kälte Check (Priorität!)
-      let isCold = false;
-      if (room.temp < limits.tempMin) {
-          isCold = true;
-          title = `ACHTUNG KÄLTE: ${room.name}`;
-          statusIcon = "❄️";
-          statusText = "Sofort schließen!";
-          reasonText = `${room.temp}°C (Zu kalt!)`;
-      } else if (remaining <= 0) {
-          // Zeit abgelaufen (und keine Auto-Verlängerung mehr möglich oder Luft gut)
-          title = `Fenster schließen: ${room.name}`;
-          statusIcon = "✅";
-          statusText = "Zeit abgelaufen";
-      }
-
-      const body = `${statusIcon} ${statusText}\n🌡️ ${room.temp}°C | ${reasonText}`;
-
-      // --- SENDEN ENTSCHEIDEN ---
-      
-      // Nur senden, wenn sich der Text geändert hat (z.B. Minute umgesprungen) ODER es kritisch ist
-      if (lastNotificationMap.current[room.id] !== body) {
+          // --- STATUS TEXT BAUEN ---
+          let title = `Lüften: ${room.name}`;
+          let statusIcon = "⏳";
+          let statusText = `Noch ${Math.max(0, remaining)} Min.`;
+          let reasonText = "";
           
-          let vibrate = []; // Standard: Stumm (nur Update in der Leiste)
-          let renotify = false;
+          // Probleme identifizieren für den Text
+          const humIssue = analysis.issues.find(i => i.type === 'hum');
+          const co2Issue = analysis.issues.find(i => i.type === 'co2');
+          
+          if (co2Issue) reasonText += `CO2 hoch (${room.co2}) `;
+          if (humIssue) reasonText += `Feuchte hoch (${room.humidity}%) `;
+          if (!co2Issue && !humIssue) reasonText = "Luftqualität gut ✅";
 
-          // VIBRIEREN NUR BEI KRITISCHEN EVENTS
-          // 1. Kälte Alarm
-          if (isCold) {
-              vibrate = [500, 200, 500];
-              renotify = true; // Aufwecken!
-          } 
-          // 2. Zeit abgelaufen (Final)
-          else if (remaining <= 0) {
-              vibrate = [200, 100, 200];
-              renotify = true; // Kurz Bescheid geben
+          // Kälte Check (Priorität!)
+          let isCold = false;
+          if (room.temp < limits.tempMin) {
+              isCold = true;
+              title = `ACHTUNG KÄLTE: ${room.name}`;
+              statusIcon = "❄️";
+              statusText = "Sofort schließen!";
+              reasonText = `${room.temp}°C (Zu kalt!)`;
+          } else if (remaining <= 0) {
+              // Zeit abgelaufen (und keine Auto-Verlängerung mehr möglich oder Luft gut)
+              title = `Fenster schließen: ${room.name}`;
+              statusIcon = "✅";
+              statusText = "Zeit abgelaufen";
           }
 
-          sendNotification(title, {
-              body: body,
-              tag: sessionBase, // WICHTIG: Gleicher Tag = Update statt neu
-              vibrate: vibrate,
-              renotify: renotify
-          });
+          const body = `${statusIcon} ${statusText}\n🌡️ ${room.temp}°C | ${reasonText}`;
 
-          lastNotificationMap.current[room.id] = body;
+          // --- SENDEN ENTSCHEIDEN ---
+          
+          // Nur senden, wenn sich der Text geändert hat (z.B. Minute umgesprungen) ODER es kritisch ist
+          if (lastNotificationMap.current[room.id] !== body) {
+              
+              let vibrate = []; // Standard: Stumm (nur Update in der Leiste)
+              let renotify = false;
+
+              // VIBRIEREN NUR BEI KRITISCHEN EVENTS
+              // 1. Kälte Alarm
+              if (isCold) {
+                  vibrate = [500, 200, 500];
+                  renotify = true; // Aufwecken!
+              } 
+              // 2. Zeit abgelaufen (Final)
+              else if (remaining <= 0) {
+                  vibrate = [200, 100, 200];
+                  renotify = true; // Kurz Bescheid geben
+              }
+
+              sendNotification(title, {
+                  body: body,
+                  tag: sessionBase, // WICHTIG: Gleicher Tag = Update statt neu
+                  vibrate: vibrate,
+                  renotify: renotify
+              });
+
+              lastNotificationMap.current[room.id] = body;
+          }
       }
-
     });
   }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings, timerExtensions]);
 
