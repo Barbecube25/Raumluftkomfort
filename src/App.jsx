@@ -538,8 +538,8 @@ const HistoryChart = ({ type, data, color }) => {
             dataKey="time" 
             tick={{fontSize: 10, fill: '#64748b'}} 
             axisLine={false} 
-            tickLine={false}
-            minTickGap={30}
+            tickLine={false} 
+            minTickGap={30} 
           />
           <YAxis 
             hide={true} 
