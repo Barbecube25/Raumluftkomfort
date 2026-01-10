@@ -31,8 +31,19 @@ import {
   Power,
   Moon, 
   Sun,
-  Snowflake 
+  Snowflake,
+  ChevronDown, // Neu
+  ChevronUp    // Neu
 } from 'lucide-react';
+// Neu: Recharts für Diagramme
+import { 
+  AreaChart, 
+  Area, 
+  XAxis, 
+  YAxis, 
+  Tooltip, 
+  ResponsiveContainer 
+} from 'recharts';
 
 // --- KONFIGURATION & UMGEBUNGSVARIABLEN ---
 
@@ -483,6 +494,50 @@ const useHomeAssistant = () => {
   return { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh: fetchData, enableDemoMode, setTemperature, setHvacMode };
 };
 
+// --- CHART COMPONENT ---
+const HistoryChart = ({ type, data, color }) => {
+  if (!data || data.length === 0) return <div className="h-40 flex items-center justify-center text-slate-500 text-xs">Keine Daten verfügbar</div>;
+  
+  return (
+    <div className="h-40 w-full mt-2">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data}>
+          <defs>
+            <linearGradient id={`color${type}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={color} stopOpacity={0.3}/>
+              <stop offset="95%" stopColor={color} stopOpacity={0}/>
+            </linearGradient>
+          </defs>
+          <XAxis 
+            dataKey="time" 
+            tick={{fontSize: 10, fill: '#64748b'}} 
+            axisLine={false} 
+            tickLine={false}
+            minTickGap={30}
+          />
+          <YAxis 
+            hide={true} 
+            domain={['dataMin - 1', 'dataMax + 1']}
+          />
+          <Tooltip 
+            contentStyle={{backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff'}}
+            itemStyle={{color: color}}
+            labelStyle={{color: '#94a3b8', fontSize: '10px'}}
+          />
+          <Area 
+            type="monotone" 
+            dataKey="value" 
+            stroke={color} 
+            fillOpacity={1} 
+            fill={`url(#color${type})`} 
+            strokeWidth={2}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
 // --- SETTINGS MODAL ---
 const SettingsModal = ({ settings, onSave, onClose }) => {
   const [localSettings, setLocalSettings] = useState(settings);
@@ -862,86 +917,135 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
   if (!room) return null;
   const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
   const limits = settings[room.type] || settings.default;
+  
+  // History State
+  const [activeChart, setActiveChart] = useState(null); // 'temp' or 'humidity'
+  const [historyData, setHistoryData] = useState([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  const fetchHistory = async (entityId) => {
+    if (!HA_URL || !HA_TOKEN || !entityId) return;
+    
+    setIsLoadingHistory(true);
+    setHistoryData([]);
+    
+    try {
+      const endTime = new Date();
+      const startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000); // 24h
+      
+      const url = `${HA_URL}/api/history/period/${startTime.toISOString()}?filter_entity_id=${entityId}&end_time=${endTime.toISOString()}`;
+      
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json' },
+      });
+      
+      if (!response.ok) throw new Error('History fetch failed');
+      
+      const data = await response.json();
+      
+      if (data && data.length > 0) {
+        const formattedData = data[0].map(entry => ({
+          time: new Date(entry.last_updated).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+          value: parseFloat(entry.state)
+        })).filter(d => !isNaN(d.value));
+        
+        // Downsample data for performance (take every n-th point)
+        const downsampled = formattedData.filter((_, index) => index % 10 === 0);
+        setHistoryData(downsampled);
+      }
+    } catch (e) {
+      console.error("History fetch error", e);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  const toggleChart = (type) => {
+    if (activeChart === type) {
+      setActiveChart(null);
+    } else {
+      setActiveChart(type);
+      const map = SENSOR_MAPPING[room.id];
+      if (map) {
+        const entityId = type === 'temp' ? map.temp : map.humidity;
+        fetchHistory(entityId);
+      }
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
         <div className="p-6 pb-2 flex justify-between items-start">
-           <div>
-             <h2 className="text-2xl font-bold text-white">{room.name}</h2>
-             <p className="text-slate-400 text-sm mt-1">Details & Analyse {analysis.isNight && '(Nachtmodus)'}</p>
-           </div>
-           <button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
-             <X size={20}/>
-           </button>
+           <div><h2 className="text-2xl font-bold text-white">{room.name}</h2><p className="text-slate-400 text-sm mt-1">Details & Analyse {analysis.isNight && '(Nachtmodus)'}</p></div>
+           <button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"><X size={20}/></button>
         </div>
-
-        <div className="p-6 pt-4 overflow-y-auto">
+        <div className="p-6 pt-4 overflow-y-auto custom-scrollbar">
+          
           <div className={`mb-6 p-4 rounded-3xl flex items-center gap-4 ${analysis.score >= 80 ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-900/50' : analysis.score >= 60 ? 'bg-yellow-900/30 text-yellow-400 border border-yellow-900/50' : 'bg-red-900/30 text-red-400 border border-red-900/50'}`}>
-             <div className="text-4xl font-bold">{analysis.score}</div>
-             <div className="text-sm opacity-90 border-l border-current pl-4 leading-tight font-medium">
-               Klima-<br/>Score
-             </div>
+             <div className="text-4xl font-bold">{analysis.score}</div><div className="text-sm opacity-90 border-l border-current pl-4 leading-tight font-medium">Klima-<br/>Score</div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 mb-6">
-             <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
-                <div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Thermometer size={14}/> Temperatur</div>
+             {/* Temperatur Box - Klickbar */}
+             <div 
+               onClick={() => toggleChart('temp')}
+               className={`bg-slate-800 p-4 rounded-2xl border transition-all cursor-pointer ${activeChart === 'temp' ? 'border-orange-500 bg-slate-800/80 ring-2 ring-orange-500/20' : 'border-slate-700 hover:border-slate-600'}`}
+             >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs"><Thermometer size={14}/> Temperatur</div>
+                  {activeChart === 'temp' ? <ChevronUp size={14} className="text-orange-500"/> : <ChevronDown size={14} className="text-slate-600"/>}
+                </div>
                 <div className="text-2xl font-medium text-white">{room.temp}°C</div>
                 <div className="text-[10px] text-slate-500 mt-1">Ziel: {limits.tempMin}-{limits.tempMax}°</div>
              </div>
              
-             <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
-                <div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Droplets size={14}/> Feuchte</div>
+             {/* Feuchtigkeit Box - Klickbar */}
+             <div 
+               onClick={() => toggleChart('humidity')}
+               className={`bg-slate-800 p-4 rounded-2xl border transition-all cursor-pointer ${activeChart === 'humidity' ? 'border-blue-500 bg-slate-800/80 ring-2 ring-blue-500/20' : 'border-slate-700 hover:border-slate-600'}`}
+             >
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2 text-slate-400 text-xs"><Droplets size={14}/> Feuchte</div>
+                  {activeChart === 'humidity' ? <ChevronUp size={14} className="text-blue-500"/> : <ChevronDown size={14} className="text-slate-600"/>}
+                </div>
                 <div className="text-2xl font-medium text-white">{room.humidity}%</div>
-                <div className="text-[10px] text-slate-500 mt-1">Taupunkt: {analysis.dewPoint}°</div>
+                <div className="text-[10px] text-slate-500 mt-1">Ziel: {limits.humMin}-{limits.humMax}%</div>
              </div>
-
-             {room.hasCo2 && (
-               <div className="col-span-2 bg-slate-800 p-4 rounded-2xl border border-slate-700 flex justify-between items-center">
-                  <div>
-                    <div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Wind size={14}/> CO2 Belastung</div>
-                    <div className="text-xl font-medium text-white">{room.co2} ppm</div>
-                  </div>
-                  <div className={`px-3 py-1 rounded-full text-xs font-bold ${room.co2 < 1000 ? 'bg-emerald-900/50 text-emerald-400' : 'bg-red-900/50 text-red-400'}`}>
-                     {room.co2 < 1000 ? 'Gut' : 'Schlecht'}
-                  </div>
-               </div>
-             )}
           </div>
+
+          {/* DIAGRAMM ANZEIGE */}
+          {activeChart && (
+            <div className="mb-6 animate-in slide-in-from-top-4 fade-in duration-300">
+               <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800">
+                  <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider flex justify-between">
+                     Verlauf (24h)
+                     {isLoadingHistory && <RefreshCw size={12} className="animate-spin"/>}
+                  </div>
+                  {isLoadingHistory ? (
+                     <div className="h-40 flex items-center justify-center text-slate-600 text-xs">Lade Daten...</div>
+                  ) : (
+                     <HistoryChart 
+                        type={activeChart} 
+                        data={historyData} 
+                        color={activeChart === 'temp' ? '#f97316' : '#3b82f6'} 
+                     />
+                  )}
+               </div>
+            </div>
+          )}
+
+          {/* Rest der Modal Inhalte (CO2, Empfehlungen, etc.) */}
+          {room.hasCo2 && (<div className="mb-6 bg-slate-800 p-4 rounded-2xl border border-slate-700 flex justify-between items-center"><div><div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Wind size={14}/> CO2 Belastung</div><div className="text-xl font-medium text-white">{room.co2} ppm</div></div><div className={`px-3 py-1 rounded-full text-xs font-bold ${room.co2 < 1000 ? 'bg-emerald-900/50 text-emerald-400' : 'bg-red-900/50 text-red-400'}`}>{room.co2 < 1000 ? 'Gut' : 'Schlecht'}</div></div>)}
 
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Empfehlungen</h3>
           <div className="space-y-3">
              {analysis.recommendations.length > 0 ? analysis.recommendations.map((rec, i) => (
-                <div key={i} className={`flex gap-3 p-3 rounded-2xl items-start ${rec.includes('Noch') ? 'bg-blue-900/30 text-blue-200 border border-blue-900/50' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}>
-                   <div className="mt-0.5 opacity-70">
-                      {rec.includes('Klima') || rec.includes('AC') ? <Snowflake size={16}/> : rec.includes('Querlüften') ? <ArrowRightLeft size={16}/> : rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}
-                   </div>
-                   <div className="text-sm font-medium">{rec}</div>
-                </div>
-             )) : (
-               <div className="flex gap-3 p-4 rounded-2xl bg-emerald-900/20 text-emerald-400 border border-emerald-900/30 items-center">
-                  <CheckCircle size={20} />
-                  <span className="font-medium text-sm">Perfektes Klima.</span>
-               </div>
-             )}
+                <div key={i} className={`flex gap-3 p-3 rounded-2xl items-start ${rec.includes('Noch') ? 'bg-blue-900/30 text-blue-200 border border-blue-900/50' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}><div className="mt-0.5 opacity-70">{rec.includes('Klima') || rec.includes('AC') ? <Snowflake size={16}/> : rec.includes('Querlüften') ? <ArrowRightLeft size={16}/> : rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}</div><div className="text-sm font-medium">{rec}</div></div>
+             )) : (<div className="flex gap-3 p-4 rounded-2xl bg-emerald-900/20 text-emerald-400 border border-emerald-900/30 items-center"><CheckCircle size={20} /><span className="font-medium text-sm">Perfektes Klima.</span></div>)}
           </div>
-
            <div className="mt-6 pt-6 border-t border-slate-800 space-y-3">
-              {room.hasWindow && (
-                <div className="flex justify-between items-center text-sm">
-                    <span className="text-slate-500">Fenster</span>
-                    <div className="flex items-center gap-2">
-                      {room.windowOpen ? (
-                        <span className="flex items-center gap-2 text-blue-400 font-medium px-3 py-1 bg-blue-900/20 rounded-full border border-blue-900/30">
-                          <Wind size={12}/> Offen
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">Geschlossen</span>
-                      )}
-                    </div>
-                </div>
-              )}
+              {room.hasWindow && (<div className="flex justify-between items-center text-sm"><span className="text-slate-500">Fenster</span><div className="flex items-center gap-2">{room.windowOpen ? (<span className="flex items-center gap-2 text-blue-400 font-medium px-3 py-1 bg-blue-900/20 rounded-full border border-blue-900/30"><Wind size={12}/> Offen</span>) : (<span className="text-slate-400">Geschlossen</span>)}</div></div>)}
            </div>
         </div>
       </div>
@@ -1124,7 +1228,7 @@ export default function App() {
       const sessionBase = `${room.id}-${room.lastWindowOpen}`;
       const startKey = `${sessionBase}-start`;
       const coldKey = `${sessionBase}-cold`;
-      const timerKey = `${sessionBase}-timer`;
+      const timerKey = `${sessionBase}-timer`; // Base timer key
       const qualityKey = `${sessionBase}-quality`;
 
       if (!notifiedSessions.has(startKey)) {
@@ -1183,6 +1287,7 @@ export default function App() {
     });
   }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings, timerExtensions]);
 
+  // Install Prompt
   useEffect(() => {
     const handler = (e) => { e.preventDefault(); setInstallPrompt(e); };
     window.addEventListener('beforeinstallprompt', handler);
