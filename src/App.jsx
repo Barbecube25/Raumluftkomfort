@@ -244,21 +244,30 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
        }
     }
   } else if (room.temp > limits.tempMax) {
-    score -= 20;
-    issues.push({ type: 'temp', status: 'high', msg: isNight ? 'Zu warm (Nacht)' : 'Zu warm' });
-    
-    if (outside.temp >= room.temp - 0.5) { 
-        if (AC_CONNECTED_ROOMS.includes(room.id)) {
-            if (room.id === 'bath') {
-                recommendations.push('AC Modus (Lüftung) starten!');
+    // Zu warm - Nachtabsenkung Logik
+    const nightTolerance = 2.0; // Toleranz für Nachts (Raum kühlt eh aus)
+    const isSignificantlyWarm = !isNight || (room.temp > limits.tempMax + nightTolerance);
+
+    if (isSignificantlyWarm) {
+        score -= 20;
+        issues.push({ type: 'temp', status: 'high', msg: isNight ? 'Zu warm (Nacht)' : 'Zu warm' });
+        
+        if (outside.temp >= room.temp - 0.5) { 
+            if (AC_CONNECTED_ROOMS.includes(room.id)) {
+                if (room.id === 'bath') {
+                    recommendations.push('AC Modus (Lüftung) starten!');
+                } else {
+                    recommendations.push('Klimaanlage im Bad nutzen (Türen auf)');
+                }
             } else {
-                recommendations.push('Klimaanlage im Bad nutzen (Türen auf)');
+                recommendations.push('Abdunkeln (Draußen zu warm)');
             }
         } else {
-            recommendations.push('Abdunkeln (Draußen zu warm)');
+            recommendations.push(isNight ? 'Fenster auf zum Abkühlen' : 'Heizung runterdrehen / Lüften');
         }
     } else {
-        recommendations.push(isNight ? 'Fenster auf zum Abkühlen' : 'Heizung runterdrehen / Lüften');
+        // Nachts leicht zu warm -> nur leichter Punktabzug, keine Meldung
+        score -= 5;
     }
   }
 
