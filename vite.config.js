@@ -9,6 +9,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico'],
       manifest: {
+        id: 'raumklima-dashboard-v1', // Feste ID hilft bei Updates
         name: 'Raumluftkomfort',
         short_name: 'Klima',
         description: 'Raumklima Dashboard für Home Assistant',
@@ -50,6 +51,7 @@ export default defineConfig({
               {
                 src: "/pwa-512x512.png",
                 sizes: "512x512",
+                type: "image/png", // WICHTIG: Typ muss angegeben sein
                 label: "Widget Vorschau"
               }
             ],
@@ -78,6 +80,7 @@ export default defineConfig({
               {
                 src: "/pwa-512x512.png",
                 sizes: "512x512",
+                type: "image/png", // WICHTIG: Typ muss angegeben sein
                 label: "Widget Vorschau"
               }
             ],
