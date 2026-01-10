@@ -176,14 +176,19 @@ const getTargetVentilationTime = (outsideTemp) => {
 
 const formatTimeAgo = (dateString) => {
   if (!dateString) return '';
-  const diff = Date.now() - new Date(dateString).getTime();
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(minutes / 60);
-  
-  if (minutes < 1) return 'gerade eben';
-  if (minutes < 60) return `${minutes}m`;
-  if (hours < 24) return `${hours}h`;
-  return '>1d';
+  try {
+    const diff = Date.now() - new Date(dateString).getTime();
+    if (isNaN(diff)) return '';
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(minutes / 60);
+    
+    if (minutes < 1) return 'gerade eben';
+    if (minutes < 60) return `${minutes}m`;
+    if (hours < 24) return `${hours}h`;
+    return '>1d';
+  } catch (e) {
+    return '';
+  }
 };
 
 const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
@@ -380,11 +385,6 @@ const useHomeAssistant = () => {
         return e && !isNaN(e.state) ? parseFloat(e.state) : null;
       };
 
-      const getAttr = (id, attr) => {
-        const e = states.find(s => s.entity_id === id);
-        return e ? e.attributes[attr] : null;
-      };
-
       if (SENSOR_MAPPING.outside) {
         setOutside({
           temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
@@ -404,7 +404,11 @@ const useHomeAssistant = () => {
         const wOpen = wSensor ? wSensor.state === 'on' : false;
         
         let lastOpen = room.lastWindowOpen;
-        if (wOpen && wSensor) lastOpen = wSensor.last_changed;
+        if (wOpen && wSensor) {
+            // Keep existing timestamp if window still open to avoid reset
+            if (room.windowOpen) lastOpen = room.lastWindowOpen;
+            else lastOpen = wSensor.last_changed;
+        }
         else if (!wOpen) lastOpen = null;
 
         let targetTemp = room.targetTemp;
@@ -947,7 +951,7 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
   const limits = settings[room.type] || settings.default;
   
   // History State
-  const [activeChart, setActiveChart] = useState(null); // 'temp', 'humidity', or 'co2'
+  const [activeChart, setActiveChart] = useState(null); // 'temp' or 'humidity'
   const [historyData, setHistoryData] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
@@ -1142,6 +1146,9 @@ export default function App() {
   const [notifyPerm, setNotifyPerm] = useState('default');
   const [timerExtensions, setTimerExtensions] = useState({});
 
+  // Speichert den letzten Benachrichtigungstext pro Raum, um Spam zu vermeiden
+  const lastNotificationMap = useRef({});
+
   const [comfortSettings, setComfortSettings] = useState(() => {
     const saved = localStorage.getItem('comfortSettings');
     return saved ? JSON.parse(saved) : DEFAULT_COMFORT_RANGES;
@@ -1211,7 +1218,11 @@ export default function App() {
           const wOpen = wSensor ? wSensor.state === 'on' : false;
           
           let lastOpen = room.lastWindowOpen;
-          if (wOpen && wSensor) lastOpen = wSensor.last_changed;
+          if (wOpen && wSensor) {
+            // Keep existing timestamp if window still open to avoid reset
+            if (room.windowOpen) lastOpen = room.lastWindowOpen;
+            else lastOpen = wSensor.last_changed;
+        }
           else if (!wOpen) lastOpen = null;
 
           let targetTemp = room.targetTemp;
@@ -1258,20 +1269,27 @@ export default function App() {
   const sendNotification = (title, options) => {
     if (Notification.permission !== 'granted') return;
     
-    const extOptions = {
-        ...options,
-        vibrate: [200, 100, 200], 
+    // Standard-Optionen: Keine Vibration (silent update), bleibt stehen
+    const defaults = {
+        vibrate: [], 
         requireInteraction: true,  
-        icon: '/pwa-192x192.png'
+        icon: '/pwa-192x192.png',
+        renotify: false // Wichtig: Nicht jedes Mal bimmeln beim Update
     };
+    
+    const finalOptions = { ...defaults, ...options };
 
     try {
       if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
         navigator.serviceWorker.ready.then(reg => {
-          reg.showNotification(title, extOptions);
+          reg.showNotification(title, finalOptions);
         });
       } else {
-        new Notification(title, extOptions);
+        // Fallback for non-SW environments (safer for Android WebView crashes)
+        // Removing vibrate property as it can cause crashes in some contexts without user gesture
+        const safeOptions = { ...finalOptions };
+        delete safeOptions.vibrate; 
+        new Notification(title, safeOptions);
       }
     } catch (e) {
       console.error('Notify failed', e);
