@@ -32,10 +32,10 @@ import {
   Moon, 
   Sun,
   Snowflake,
-  ChevronDown, // Neu
-  ChevronUp    // Neu
+  ChevronDown,
+  ChevronUp,
+  Palmtree // Neu: Icon für Urlaubsmodus
 } from 'lucide-react';
-// Neu: Recharts für Diagramme
 import { 
   AreaChart, 
   Area, 
@@ -192,6 +192,7 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
   
   let limits = settings[room.type] || settings.default;
   
+  // Nachtabsenkung: Automatisch auf 18°C Ziel (Toleranz 17.5 - 19.0)
   if (isNight && room.type !== 'storage') {
      limits = { ...limits, tempMin: 17.5, tempMax: 19.0 };
   }
@@ -224,10 +225,22 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
   
   const ventDurationText = `${totalTargetMin} Min`;
 
+  // Temp Check
   if (room.temp < limits.tempMin) {
     score -= 20;
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
-    if (!room.windowOpen) recommendations.push('Heizung prüfen');
+    
+    if (!room.windowOpen) {
+       // Thermostat Check
+       if (room.targetTemp !== null && room.targetTemp !== undefined) {
+           if (room.targetTemp < limits.tempMin) {
+               recommendations.push(`Thermostat zu niedrig (steht auf ${room.targetTemp}°)`);
+           }
+           // else: Thermostat passt, Raum heizt vermutlich gerade auf -> Keine Meldung
+       } else {
+           recommendations.push('Heizung prüfen');
+       }
+    }
   } else if (room.temp > limits.tempMax) {
     score -= 20;
     issues.push({ type: 'temp', status: 'high', msg: isNight ? 'Zu warm (Nacht)' : 'Zu warm' });
@@ -615,6 +628,15 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
 // --- HEATING CONTROL MODAL ---
 const HeatingControlModal = ({ rooms, setTemperature, setHvacMode, onClose }) => {
   const heatedRooms = rooms.filter(r => r.climateEntity);
+
+  const handleVacationMode = () => {
+    if (confirm("Urlaubsmodus aktivieren? Alle Heizungen werden auf 18°C gestellt.")) {
+       heatedRooms.forEach(room => {
+          setTemperature(room.climateEntity, 18);
+       });
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div className="bg-slate-900 rounded-3xl border border-slate-800 shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
@@ -622,7 +644,17 @@ const HeatingControlModal = ({ rooms, setTemperature, setHvacMode, onClose }) =>
           <h2 className="text-xl font-bold text-white flex items-center gap-2"><Flame size={20} className="text-orange-500"/> Heizungssteuerung</h2>
           <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-800 text-slate-400"><X size={20}/></button>
         </div>
+        
         <div className="p-6 overflow-y-auto space-y-4">
+          
+          <button 
+            onClick={handleVacationMode}
+            className="w-full bg-indigo-900/30 border border-indigo-500/30 p-4 rounded-2xl flex items-center justify-center gap-3 text-indigo-300 hover:bg-indigo-900/50 transition-colors mb-2"
+          >
+            <Palmtree size={20} />
+            <span className="font-bold">Urlaubsmodus (Alle 18°C)</span>
+          </button>
+
           {heatedRooms.length === 0 ? <div className="text-center text-slate-500 py-8">Keine steuerbaren Heizungen gefunden.</div> : heatedRooms.map(room => {
               const isOff = room.hvacMode === 'off';
               return (
