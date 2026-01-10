@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Thermometer, 
   Droplets, 
@@ -34,7 +34,7 @@ import {
   Snowflake,
   ChevronDown,
   ChevronUp,
-  Palmtree // Neu: Icon für Urlaubsmodus
+  Palmtree
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -192,7 +192,6 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
   
   let limits = settings[room.type] || settings.default;
   
-  // Nachtabsenkung: Automatisch auf 18°C Ziel (Toleranz 17.5 - 19.0)
   if (isNight && room.type !== 'storage') {
      limits = { ...limits, tempMin: 17.5, tempMax: 19.0 };
   }
@@ -225,18 +224,15 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
   
   const ventDurationText = `${totalTargetMin} Min`;
 
-  // Temp Check
   if (room.temp < limits.tempMin) {
     score -= 20;
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
     
     if (!room.windowOpen) {
-       // Thermostat Check
        if (room.targetTemp !== null && room.targetTemp !== undefined) {
            if (room.targetTemp < limits.tempMin) {
                recommendations.push(`Thermostat zu niedrig (steht auf ${room.targetTemp}°)`);
            }
-           // else: Thermostat passt, Raum heizt vermutlich gerade auf -> Keine Meldung
        } else {
            recommendations.push('Heizung prüfen');
        }
@@ -951,7 +947,7 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
   const limits = settings[room.type] || settings.default;
   
   // History State
-  const [activeChart, setActiveChart] = useState(null); // 'temp' or 'humidity'
+  const [activeChart, setActiveChart] = useState(null); // 'temp', 'humidity', or 'co2'
   const [historyData, setHistoryData] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
@@ -999,7 +995,11 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
       setActiveChart(type);
       const map = SENSOR_MAPPING[room.id];
       if (map) {
-        const entityId = type === 'temp' ? map.temp : map.humidity;
+        let entityId;
+        if (type === 'temp') entityId = map.temp;
+        if (type === 'humidity') entityId = map.humidity;
+        if (type === 'co2') entityId = map.co2;
+        
         fetchHistory(entityId);
       }
     }
@@ -1046,8 +1046,8 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
              </div>
           </div>
 
-          {/* DIAGRAMM ANZEIGE */}
-          {activeChart && (
+          {/* DIAGRAMM ANZEIGE für Temp/Feuchte */}
+          {(activeChart === 'temp' || activeChart === 'humidity') && (
             <div className="mb-6 animate-in slide-in-from-top-4 fade-in duration-300">
                <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800">
                   <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider flex justify-between">
@@ -1067,8 +1067,45 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
             </div>
           )}
 
-          {/* Rest der Modal Inhalte (CO2, Empfehlungen, etc.) */}
-          {room.hasCo2 && (<div className="mb-6 bg-slate-800 p-4 rounded-2xl border border-slate-700 flex justify-between items-center"><div><div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Wind size={14}/> CO2 Belastung</div><div className="text-xl font-medium text-white">{room.co2} ppm</div></div><div className={`px-3 py-1 rounded-full text-xs font-bold ${room.co2 < 1000 ? 'bg-emerald-900/50 text-emerald-400' : 'bg-red-900/50 text-red-400'}`}>{room.co2 < 1000 ? 'Gut' : 'Schlecht'}</div></div>)}
+          {/* CO2 Section */}
+          {room.hasCo2 && (
+            <div 
+              onClick={() => toggleChart('co2')}
+              className={`mb-6 bg-slate-800 p-4 rounded-2xl border transition-all cursor-pointer flex justify-between items-center ${activeChart === 'co2' ? 'border-purple-500 bg-slate-800/80 ring-2 ring-purple-500/20' : 'border-slate-700 hover:border-slate-600'}`}
+            >
+              <div>
+                <div className="flex items-center gap-2 text-slate-400 text-xs mb-1">
+                   <Wind size={14}/> CO2 Belastung
+                   {activeChart === 'co2' ? <ChevronUp size={14} className="text-purple-500"/> : <ChevronDown size={14} className="text-slate-600"/>}
+                </div>
+                <div className="text-xl font-medium text-white">{room.co2} ppm</div>
+              </div>
+              <div className={`px-3 py-1 rounded-full text-xs font-bold ${room.co2 < 1000 ? 'bg-emerald-900/50 text-emerald-400' : 'bg-red-900/50 text-red-400'}`}>
+                {room.co2 < 1000 ? 'Gut' : 'Schlecht'}
+              </div>
+            </div>
+          )}
+
+          {/* DIAGRAMM ANZEIGE für CO2 */}
+          {activeChart === 'co2' && (
+            <div className="mb-6 animate-in slide-in-from-top-4 fade-in duration-300">
+               <div className="bg-slate-950/50 p-4 rounded-2xl border border-slate-800">
+                  <div className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider flex justify-between">
+                     CO2 Verlauf (24h)
+                     {isLoadingHistory && <RefreshCw size={12} className="animate-spin"/>}
+                  </div>
+                  {isLoadingHistory ? (
+                     <div className="h-40 flex items-center justify-center text-slate-600 text-xs">Lade Daten...</div>
+                  ) : (
+                     <HistoryChart 
+                        type={activeChart} 
+                        data={historyData} 
+                        color={'#8b5cf6'} 
+                     />
+                  )}
+               </div>
+            </div>
+          )}
 
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Empfehlungen</h3>
           <div className="space-y-3">
@@ -1126,6 +1163,7 @@ export default function App() {
 
   const { refresh, enableDemoMode, setTemperature, setHvacMode } = useHomeAssistant();
 
+  // Data fetching hook usage merged here
   useEffect(() => {
     const fetchData = async () => {
       if (!HA_URL || !HA_TOKEN) {
@@ -1244,78 +1282,106 @@ export default function App() {
     if (notifyPerm !== 'granted') return;
 
     rooms.forEach(room => {
-      if (!room.windowOpen || !room.lastWindowOpen) return;
+      // Wir kümmern uns nur um offene Fenster
+      if (!room.windowOpen || !room.lastWindowOpen) {
+          // Falls Fenster zu, könnten wir die Notification löschen, aber das ist komplex ohne Service Worker ID
+          return;
+      }
 
       const limits = comfortSettings[room.type] || comfortSettings.default;
       const analysis = analyzeRoom(room, outside, comfortSettings, rooms, timerExtensions); 
-      const targetMin = getTargetVentilationTime(outside.temp);
-      const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
-      const openMin = diffMs / 60000;
       
+      const targetMin = getTargetVentilationTime(outside.temp);
       let adjustedTarget = targetMin;
       if (analysis.isCrossVentilating) adjustedTarget = Math.ceil(targetMin / 2);
       
-      const remaining = adjustedTarget - openMin;
-      
       const sessionBase = `${room.id}-${room.lastWindowOpen}`;
-      const startKey = `${sessionBase}-start`;
-      const coldKey = `${sessionBase}-cold`;
-      const timerKey = `${sessionBase}-timer`; // Base timer key
-      const qualityKey = `${sessionBase}-quality`;
-
-      if (!notifiedSessions.has(startKey)) {
-         sendNotification(`Lüftung gestartet: ${room.name}`, {
-            body: `Timer gesetzt auf ${adjustedTarget} Minuten.${analysis.isCrossVentilating ? ' (Querlüften aktiv)' : ''}`,
-            tag: startKey
-         });
-         setNotifiedSessions(prev => new Set(prev).add(startKey));
-      }
-
-      if (room.temp < limits.tempMin && !notifiedSessions.has(coldKey)) {
-         sendNotification(`Achtung Kälte: ${room.name}`, {
-            body: `Temperatur ist auf ${room.temp}°C gefallen. Fenster schließen!`,
-            tag: coldKey,
-            icon: '/pwa-192x192.png'
-         });
-         setNotifiedSessions(prev => new Set(prev).add(coldKey));
-      }
-
+      const extensionMin = timerExtensions[sessionBase] || 0;
+      const totalTargetMin = adjustedTarget + extensionMin;
+      
+      const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
+      const openMin = diffMs / 60000;
+      const remaining = Math.ceil(totalTargetMin - openMin);
+      
+      // AUTO-EXTENSION LOGIC (Ohne Notification Spam)
       if (remaining <= 0) {
           const hasIssues = analysis.issues.some(i => (i.type === 'hum' && i.status === 'high') || i.type === 'co2');
           
-          if (hasIssues && (timerExtensions[sessionBase] || 0) < 30) {
-               const newExtension = (timerExtensions[sessionBase] || 0) + 5;
-               const extensionKey = `${sessionBase}-ext-${newExtension}`;
-               
-               if (!notifiedSessions.has(extensionKey)) {
-                   setTimerExtensions(prev => ({...prev, [sessionBase]: newExtension}));
-                   setNotifiedSessions(prev => new Set(prev).add(extensionKey));
-                   
-                   sendNotification(`Luft noch nicht gut: ${room.name}`, {
-                        body: `Timer um 5 Minuten verlängert.`,
-                        tag: extensionKey
-                   });
-               }
-          } else {
-               const finalKey = `${sessionBase}-final-${adjustedTarget + (timerExtensions[sessionBase] || 0)}`;
-               if (!notifiedSessions.has(finalKey)) {
-                   sendNotification(`Fenster schließen: ${room.name}`, {
-                        body: `Zeit abgelaufen.`,
-                        tag: finalKey
-                   });
-                   setNotifiedSessions(prev => new Set(prev).add(finalKey));
-               }
+          // Wenn Luft noch schlecht und wir noch nicht max. verlängert haben -> Verlängern
+          if (hasIssues && extensionMin < 30) {
+              const newExtension = extensionMin + 5;
+              const extKey = `${sessionBase}-ext-${newExtension}`;
+              
+              if (!notifiedSessions.has(extKey)) {
+                  setTimerExtensions(prev => ({...prev, [sessionBase]: newExtension}));
+                  setNotifiedSessions(prev => new Set(prev).add(extKey));
+                  // Return here, effect will re-run with new time immediately
+                  return; 
+              }
           }
       }
 
-      const hasIssues = analysis.issues.some(i => i.type === 'hum' && i.status === 'high' || i.type === 'co2');
-      if (!hasIssues && openMin > 2 && !notifiedSessions.has(qualityKey)) {
-         sendNotification(`Luft gut: ${room.name}`, {
-            body: `Werte sind im grünen Bereich.`,
-            tag: qualityKey
-         });
-         setNotifiedSessions(prev => new Set(prev).add(qualityKey));
+      // --- STATUS TEXT BAUEN ---
+      let title = `Lüften: ${room.name}`;
+      let statusIcon = "⏳";
+      let statusText = `Noch ${Math.max(0, remaining)} Min.`;
+      let reasonText = "";
+      
+      // Probleme identifizieren für den Text
+      const humIssue = analysis.issues.find(i => i.type === 'hum');
+      const co2Issue = analysis.issues.find(i => i.type === 'co2');
+      
+      if (co2Issue) reasonText += `CO2 hoch (${room.co2}) `;
+      if (humIssue) reasonText += `Feuchte hoch (${room.humidity}%) `;
+      if (!co2Issue && !humIssue) reasonText = "Luftqualität gut ✅";
+
+      // Kälte Check (Priorität!)
+      let isCold = false;
+      if (room.temp < limits.tempMin) {
+          isCold = true;
+          title = `ACHTUNG KÄLTE: ${room.name}`;
+          statusIcon = "❄️";
+          statusText = "Sofort schließen!";
+          reasonText = `${room.temp}°C (Zu kalt!)`;
+      } else if (remaining <= 0) {
+          // Zeit abgelaufen (und keine Auto-Verlängerung mehr möglich oder Luft gut)
+          title = `Fenster schließen: ${room.name}`;
+          statusIcon = "✅";
+          statusText = "Zeit abgelaufen";
       }
+
+      const body = `${statusIcon} ${statusText}\n🌡️ ${room.temp}°C | ${reasonText}`;
+
+      // --- SENDEN ENTSCHEIDEN ---
+      
+      // Nur senden, wenn sich der Text geändert hat (z.B. Minute umgesprungen) ODER es kritisch ist
+      if (lastNotificationMap.current[room.id] !== body) {
+          
+          let vibrate = []; // Standard: Stumm (nur Update in der Leiste)
+          let renotify = false;
+
+          // VIBRIEREN NUR BEI KRITISCHEN EVENTS
+          // 1. Kälte Alarm
+          if (isCold) {
+              vibrate = [500, 200, 500];
+              renotify = true; // Aufwecken!
+          } 
+          // 2. Zeit abgelaufen (Final)
+          else if (remaining <= 0) {
+              vibrate = [200, 100, 200];
+              renotify = true; // Kurz Bescheid geben
+          }
+
+          sendNotification(title, {
+              body: body,
+              tag: sessionBase, // WICHTIG: Gleicher Tag = Update statt neu
+              vibrate: vibrate,
+              renotify: renotify
+          });
+
+          lastNotificationMap.current[room.id] = body;
+      }
+
     });
   }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings, timerExtensions]);
 
