@@ -1547,6 +1547,7 @@ export default function App() {
             value={`${outside.temp}°`} 
             subValue={`TP: ${calculateDewPoint(outside.temp, outside.humidity).toFixed(1)}°`}
             theme="primary"
+            onClick={() => window.open('https://wetter-app-sandy.vercel.app', '_blank')} 
           />
            <M3StatCard 
             icon={Home} 
