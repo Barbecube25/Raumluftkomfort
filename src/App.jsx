@@ -245,12 +245,13 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
     }
   } else if (room.temp > limits.tempMax) {
     // Zu warm - Nachtabsenkung Logik
-    const nightTolerance = 2.0; // Toleranz für Nachts (Raum kühlt eh aus)
+    const nightTolerance = 2.0; 
     const isSignificantlyWarm = !isNight || (room.temp > limits.tempMax + nightTolerance);
 
     if (isSignificantlyWarm) {
-        score -= 20;
-        issues.push({ type: 'temp', status: 'high', msg: isNight ? 'Zu warm (Nacht)' : 'Zu warm' });
+        // Nachts weniger Abzug für Wärme, tagsüber mehr
+        score -= isNight ? 10 : 20;
+        issues.push({ type: 'temp', status: 'high', msg: isNight ? 'Warm (Nacht)' : 'Zu warm' });
         
         if (outside.temp >= room.temp - 0.5) { 
             if (AC_CONNECTED_ROOMS.includes(room.id)) {
@@ -266,8 +267,8 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
             recommendations.push(isNight ? 'Fenster auf zum Abkühlen' : 'Heizung runterdrehen / Lüften');
         }
     } else {
-        // Nachts leicht zu warm -> nur leichter Punktabzug, keine Meldung
-        score -= 5;
+        // Nachts leicht zu warm -> kaum Abzug
+        score -= 2;
     }
   }
 
@@ -279,8 +280,10 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
     issues.push({ type: 'hum', status: 'low', msg: 'Trockene Luft' });
     recommendations.push('Luftbefeuchter nutzen');
   } else if (room.humidity > limits.humMax) {
-    score -= 30;
-    issues.push({ type: 'hum', status: 'high', msg: 'Zu feucht' });
+    // Abgestufter Abzug bei Feuchtigkeit
+    const isVeryHigh = room.humidity > limits.humMax + 10; // z.B. > 70%
+    score -= isVeryHigh ? 30 : 15;
+    issues.push({ type: 'hum', status: 'high', msg: isVeryHigh ? 'Zu feucht (kritisch)' : 'Leicht erhöht' });
     
     if (dewPointOutside < dewPointInside) {
       if (room.windowOpen && room.lastWindowOpen) {
@@ -966,7 +969,7 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
   const limits = settings[room.type] || settings.default;
   
   // History State
-  const [activeChart, setActiveChart] = useState(null); // 'temp' or 'humidity'
+  const [activeChart, setActiveChart] = useState(null); // 'temp', 'humidity', or 'co2'
   const [historyData, setHistoryData] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
