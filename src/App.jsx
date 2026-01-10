@@ -398,11 +398,6 @@ const useHomeAssistant = () => {
         return e && !isNaN(e.state) ? parseFloat(e.state) : null;
       };
 
-      const getAttr = (id, attr) => {
-        const e = states.find(s => s.entity_id === id);
-        return e ? e.attributes[attr] : null;
-      };
-
       if (SENSOR_MAPPING.outside) {
         setOutside({
           temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
@@ -969,7 +964,7 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
   const limits = settings[room.type] || settings.default;
   
   // History State
-  const [activeChart, setActiveChart] = useState(null); // 'temp', 'humidity', or 'co2'
+  const [activeChart, setActiveChart] = useState(null); // 'temp' or 'humidity'
   const [historyData, setHistoryData] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
