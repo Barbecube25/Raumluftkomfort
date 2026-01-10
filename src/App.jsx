@@ -71,7 +71,7 @@ const ROOM_CONNECTIONS = {
   basement: [] 
 };
 
-// NEU: Räume, die durch die Klimaanlage im Bad gekühlt werden können
+// Räume, die durch die Klimaanlage im Bad gekühlt werden können
 const AC_CONNECTED_ROOMS = ['bath', 'living', 'dining', 'kitchen'];
 
 const SENSOR_MAPPING = {
@@ -600,7 +600,7 @@ const HeatingControlModal = ({ rooms, setTemperature, setHvacMode, onClose }) =>
   );
 };
 
-// --- SUMMARY WIDGET VIEW (NEU) ---
+// --- SUMMARY WIDGET VIEW ---
 const SummaryWidgetView = ({ rooms, outside, settings, extensions, refresh }) => {
   const roomsWithActions = useMemo(() => {
     return rooms.map(room => {
@@ -690,94 +690,23 @@ const WidgetView = ({ outside, rooms, refresh }) => {
   );
 }
 
-// --- ROOM COMPONENTS ---
-
-const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onClick }) => {
-  const themes = {
-    primary: 'bg-slate-800 text-blue-200 border border-slate-700',
-    secondary: 'bg-slate-800 text-indigo-200 border border-slate-700',
-    tertiary: 'bg-slate-800 text-orange-200 border border-slate-700',
-    neutral: 'bg-slate-800 text-slate-200 border border-slate-700'
-  };
-  return (
-    <div onClick={onClick} className={`p-4 rounded-3xl flex flex-col justify-between h-28 ${themes[theme]} ${onClick ? 'cursor-pointer hover:shadow-lg transition-shadow' : ''}`}>
-      <div className="flex justify-between items-start"><Icon size={20} className="opacity-80"/><span className="text-2xl font-semibold">{value}</span></div>
-      <div><div className="text-xs font-medium opacity-70 uppercase tracking-wide">{label}</div><div className="text-[10px] opacity-60 mt-0.5">{subValue}</div></div>
-    </div>
-  );
-};
-
-const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, onClick }) => {
-  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
-  let containerClass = "bg-slate-800 border-slate-700";
-  let scoreBadgeClass = "bg-emerald-900/50 text-emerald-400 border border-emerald-800";
-  if (analysis.score < 80) { containerClass = "bg-slate-800 border-yellow-900/50 shadow-[0_0_15px_rgba(234,179,8,0.1)]"; scoreBadgeClass = "bg-yellow-900/50 text-yellow-400 border border-yellow-800"; }
-  if (analysis.score < 60) { containerClass = "bg-slate-800 border-red-900/50 shadow-[0_0_15px_rgba(239,68,68,0.1)]"; scoreBadgeClass = "bg-red-900/50 text-red-400 border border-red-800"; }
-  const countdownMsg = analysis.recommendations.find(r => r.includes('Noch') && r.includes('Min'));
-  return (
-    <div onClick={onClick} className={`group relative p-4 rounded-3xl transition-all cursor-pointer border ${containerClass} ${room.windowOpen ? 'ring-1 ring-blue-500' : ''}`}>
-      <div className="flex justify-between items-center mb-3">
-        <div className="flex items-center gap-3 overflow-hidden">
-           <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${analysis.score < 60 ? 'bg-red-900/30 text-red-400' : 'bg-slate-700 text-slate-300'}`}><Home size={16} /></div>
-           <div className="min-w-0">
-              <h3 className="font-medium text-base text-slate-100 leading-tight truncate">{room.name}</h3>
-              {room.windowOpen && (<p className="text-[10px] text-blue-400 font-bold uppercase tracking-wider flex items-center gap-1 mt-0.5">Offen {formatTimeAgo(room.lastWindowOpen)}</p>)}
-           </div>
-        </div>
-        <div className={`px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${scoreBadgeClass}`}>{analysis.score}</div>
-      </div>
-      <div className="grid grid-cols-2 gap-2 mb-2">
-        <div className="bg-slate-900/50 p-2 rounded-xl"><div className="text-[10px] text-slate-500 mb-0.5">Temp</div><div className="text-lg font-medium text-slate-200">{room.temp ? room.temp.toFixed(1) : '-'}°</div></div>
-        <div className="bg-slate-900/50 p-2 rounded-xl"><div className="text-[10px] text-slate-500 mb-0.5">Feuchte</div><div className={`text-lg font-medium ${analysis.issues.some(i => i.type === 'hum') ? 'text-red-400' : 'text-slate-200'}`}>{room.humidity || '-'}%</div></div>
-      </div>
-      {analysis.recommendations.length > 0 && (
-         <div className={`mt-2 flex items-start gap-2 text-[11px] p-2 rounded-xl ${countdownMsg ? 'bg-blue-900/30 text-blue-300 border border-blue-900/50' : 'bg-slate-900/30 text-slate-400'}`}>
-            {analysis.isCrossVentilating && <ArrowRightLeft size={14} className="mt-0.5 shrink-0 text-blue-400"/>}
-            {countdownMsg && !analysis.isCrossVentilating && <Timer size={14} className="mt-0.5 shrink-0"/>}
-            {!countdownMsg && !analysis.isCrossVentilating && analysis.recommendations.some(r => r.includes('Klima') || r.includes('AC')) && <Snowflake size={14} className="mt-0.5 shrink-0 text-blue-400"/>}
-            {!countdownMsg && !analysis.isCrossVentilating && !analysis.recommendations.some(r => r.includes('Klima') || r.includes('AC')) && <AlertCircle size={14} className="mt-0.5 shrink-0 text-amber-500"/>}
-            <span className="line-clamp-1 leading-snug">{countdownMsg || analysis.recommendations[0]}</span>
-         </div>
-      )}
-    </div>
-  );
-};
-
-const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose }) => {
-  if (!room) return null;
-  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
-  const limits = settings[room.type] || settings.default;
+// --- WINDOW LIST MODAL ---
+const WindowListModal = ({ rooms, onClose }) => {
+  const openWindows = rooms.filter(r => r.windowOpen);
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
-        <div className="p-6 pb-2 flex justify-between items-start">
-           <div><h2 className="text-2xl font-bold text-white">{room.name}</h2><p className="text-slate-400 text-sm mt-1">Details & Analyse {analysis.isNight && '(Nachtmodus)'}</p></div>
-           <button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"><X size={20}/></button>
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 p-6">
+        <div className="flex justify-between items-center mb-4"><h3 className="text-xl font-normal text-white">Fensterstatus</h3><button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300"><X size={20}/></button></div>
+        <div className="space-y-3">
+          {openWindows.length > 0 ? (openWindows.map(room => (<div key={room.id} className="flex items-center gap-3 p-4 bg-slate-800 text-blue-200 rounded-2xl border border-slate-700"><div className="bg-blue-900/30 p-2 rounded-full text-blue-400"><Wind size={20}/></div><div><span className="font-medium block text-white">{room.name}</span><span className="text-xs opacity-70">Fenster geöffnet</span></div></div>))) : (<div className="flex flex-col items-center py-8 text-emerald-400 bg-emerald-900/20 rounded-2xl border border-emerald-900/30"><CheckCircle size={40} className="mb-3 opacity-80"/><span className="font-medium text-lg">Alle geschlossen</span><span className="text-sm opacity-70">Kein Fenster ist aktuell geöffnet</span></div>)}
         </div>
-        <div className="p-6 pt-4 overflow-y-auto">
-          <div className={`mb-6 p-4 rounded-3xl flex items-center gap-4 ${analysis.score >= 80 ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-900/50' : analysis.score >= 60 ? 'bg-yellow-900/30 text-yellow-400 border border-yellow-900/50' : 'bg-red-900/30 text-red-400 border border-red-900/50'}`}>
-             <div className="text-4xl font-bold">{analysis.score}</div><div className="text-sm opacity-90 border-l border-current pl-4 leading-tight font-medium">Klima-<br/>Score</div>
-          </div>
-          <div className="grid grid-cols-2 gap-3 mb-6">
-             <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700"><div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Thermometer size={14}/> Temperatur</div><div className="text-2xl font-medium text-white">{room.temp}°C</div><div className="text-[10px] text-slate-500 mt-1">Ziel: {limits.tempMin}-{limits.tempMax}°</div></div>
-             <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700"><div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Droplets size={14}/> Feuchte</div><div className="text-2xl font-medium text-white">{room.humidity}%</div><div className="text-[10px] text-slate-500 mt-1">Ziel: {limits.humMin}-{limits.humMax}%</div></div>
-             {room.hasCo2 && (<div className="col-span-2 bg-slate-800 p-4 rounded-2xl border border-slate-700 flex justify-between items-center"><div><div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Wind size={14}/> CO2 Belastung</div><div className="text-xl font-medium text-white">{room.co2} ppm</div></div><div className={`px-3 py-1 rounded-full text-xs font-bold ${room.co2 < 1000 ? 'bg-emerald-900/50 text-emerald-400' : 'bg-red-900/50 text-red-400'}`}>{room.co2 < 1000 ? 'Gut' : 'Schlecht'}</div></div>)}
-          </div>
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Empfehlungen</h3>
-          <div className="space-y-3">
-             {analysis.recommendations.length > 0 ? analysis.recommendations.map((rec, i) => (
-                <div key={i} className={`flex gap-3 p-3 rounded-2xl items-start ${rec.includes('Noch') ? 'bg-blue-900/30 text-blue-200 border border-blue-900/50' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}><div className="mt-0.5 opacity-70">{rec.includes('Klima') || rec.includes('AC') ? <Snowflake size={16}/> : rec.includes('Querlüften') ? <ArrowRightLeft size={16}/> : rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}</div><div className="text-sm font-medium">{rec}</div></div>
-             )) : (<div className="flex gap-3 p-4 rounded-2xl bg-emerald-900/20 text-emerald-400 border border-emerald-900/30 items-center"><CheckCircle size={20} /><span className="font-medium text-sm">Perfektes Klima.</span></div>)}
-          </div>
-           <div className="mt-6 pt-6 border-t border-slate-800 space-y-3">
-              {room.hasWindow && (<div className="flex justify-between items-center text-sm"><span className="text-slate-500">Fenster</span><div className="flex items-center gap-2">{room.windowOpen ? (<span className="flex items-center gap-2 text-blue-400 font-medium px-3 py-1 bg-blue-900/20 rounded-full border border-blue-900/30"><Wind size={12}/> Offen</span>) : (<span className="text-slate-400">Geschlossen</span>)}</div></div>)}
-           </div>
-        </div>
+        <div className="mt-6 flex justify-end"><button onClick={onClose} className="px-5 py-2 rounded-full bg-slate-700 text-white text-sm font-medium hover:bg-slate-600 transition-colors">Schließen</button></div>
       </div>
     </div>
   );
 };
 
+// --- SUMMARY MODAL ---
 const SummaryModal = ({ rooms, outside, settings, extensions, onClose }) => {
   const roomsWithActions = useMemo(() => {
     return rooms.map(room => {
@@ -835,16 +764,186 @@ const SummaryModal = ({ rooms, outside, settings, extensions, onClose }) => {
   );
 };
 
-const WindowListModal = ({ rooms, onClose }) => {
-  const openWindows = rooms.filter(r => r.windowOpen);
+// --- ROOM COMPONENTS ---
+
+const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onClick }) => {
+  const themes = {
+    primary: 'bg-slate-800 text-blue-200 border border-slate-700',
+    secondary: 'bg-slate-800 text-indigo-200 border border-slate-700',
+    tertiary: 'bg-slate-800 text-orange-200 border border-slate-700',
+    neutral: 'bg-slate-800 text-slate-200 border border-slate-700'
+  };
+  
+  return (
+    <div 
+      onClick={onClick}
+      className={`p-4 rounded-3xl flex flex-col justify-between h-28 ${themes[theme]} ${onClick ? 'cursor-pointer hover:shadow-lg transition-shadow' : ''}`}
+    >
+      <div className="flex justify-between items-start">
+        <Icon size={20} className="opacity-80"/>
+        <span className="text-2xl font-semibold">{value}</span>
+      </div>
+      <div>
+        <div className="text-xs font-medium opacity-70 uppercase tracking-wide">{label}</div>
+        <div className="text-[10px] opacity-60 mt-0.5">{subValue}</div>
+      </div>
+    </div>
+  );
+};
+
+const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, onClick }) => {
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
+  
+  let containerClass = "bg-slate-800 border-slate-700";
+  let scoreBadgeClass = "bg-emerald-900/50 text-emerald-400 border border-emerald-800";
+  
+  if (analysis.score < 80) { 
+    containerClass = "bg-slate-800 border-yellow-900/50 shadow-[0_0_15px_rgba(234,179,8,0.1)]";
+    scoreBadgeClass = "bg-yellow-900/50 text-yellow-400 border border-yellow-800"; 
+  }
+  if (analysis.score < 60) { 
+    containerClass = "bg-slate-800 border-red-900/50 shadow-[0_0_15px_rgba(239,68,68,0.1)]"; 
+    scoreBadgeClass = "bg-red-900/50 text-red-400 border border-red-800";
+  }
+
+  const countdownMsg = analysis.recommendations.find(r => r.includes('Noch') && r.includes('Min'));
+
+  return (
+    <div 
+      onClick={onClick}
+      className={`group relative p-4 rounded-3xl transition-all cursor-pointer border ${containerClass} ${room.windowOpen ? 'ring-1 ring-blue-500' : ''}`}
+    >
+      <div className="flex justify-between items-center mb-3">
+        <div className="flex items-center gap-3 overflow-hidden">
+           <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${analysis.score < 60 ? 'bg-red-900/30 text-red-400' : 'bg-slate-700 text-slate-300'}`}>
+             <Home size={16} />
+           </div>
+           <div className="min-w-0">
+              <h3 className="font-medium text-base text-slate-100 leading-tight truncate">{room.name}</h3>
+              {room.windowOpen && (
+                 <p className="text-[10px] text-blue-400 font-bold uppercase tracking-wider flex items-center gap-1 mt-0.5">
+                   Offen {formatTimeAgo(room.lastWindowOpen)}
+                 </p>
+              )}
+           </div>
+        </div>
+        <div className={`px-2 py-0.5 rounded-full text-xs font-bold shrink-0 ${scoreBadgeClass}`}>
+          {analysis.score}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <div className="bg-slate-900/50 p-2 rounded-xl">
+           <div className="text-[10px] text-slate-500 mb-0.5">Temp</div>
+           <div className="text-lg font-medium text-slate-200">{room.temp ? room.temp.toFixed(1) : '-'}°</div>
+        </div>
+        <div className="bg-slate-900/50 p-2 rounded-xl">
+           <div className="text-[10px] text-slate-500 mb-0.5">Feuchte</div>
+           <div className={`text-lg font-medium ${analysis.issues.some(i => i.type === 'hum') ? 'text-red-400' : 'text-slate-200'}`}>
+             {room.humidity || '-'}%
+           </div>
+        </div>
+      </div>
+
+      {analysis.recommendations.length > 0 && (
+         <div className={`mt-2 flex items-start gap-2 text-[11px] p-2 rounded-xl ${countdownMsg ? 'bg-blue-900/30 text-blue-300 border border-blue-900/50' : 'bg-slate-900/30 text-slate-400'}`}>
+            {analysis.isCrossVentilating && <ArrowRightLeft size={14} className="mt-0.5 shrink-0 text-blue-400"/>}
+            {countdownMsg && !analysis.isCrossVentilating && <Timer size={14} className="mt-0.5 shrink-0"/>}
+            {!countdownMsg && !analysis.isCrossVentilating && analysis.recommendations.some(r => r.includes('Klima') || r.includes('AC')) && <Snowflake size={14} className="mt-0.5 shrink-0 text-blue-400"/>}
+            {!countdownMsg && !analysis.isCrossVentilating && !analysis.recommendations.some(r => r.includes('Klima') || r.includes('AC')) && <AlertCircle size={14} className="mt-0.5 shrink-0 text-amber-500"/>}
+            <span className="line-clamp-1 leading-snug">{countdownMsg || analysis.recommendations[0]}</span>
+         </div>
+      )}
+    </div>
+  );
+};
+
+const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose }) => {
+  if (!room) return null;
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
+  const limits = settings[room.type] || settings.default;
+
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 p-6">
-        <div className="flex justify-between items-center mb-4"><h3 className="text-xl font-normal text-white">Fensterstatus</h3><button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300"><X size={20}/></button></div>
-        <div className="space-y-3">
-          {openWindows.length > 0 ? (openWindows.map(room => (<div key={room.id} className="flex items-center gap-3 p-4 bg-slate-800 text-blue-200 rounded-2xl border border-slate-700"><div className="bg-blue-900/30 p-2 rounded-full text-blue-400"><Wind size={20}/></div><div><span className="font-medium block text-white">{room.name}</span><span className="text-xs opacity-70">Fenster geöffnet</span></div></div>))) : (<div className="flex flex-col items-center py-8 text-emerald-400 bg-emerald-900/20 rounded-2xl border border-emerald-900/30"><CheckCircle size={40} className="mb-3 opacity-80"/><span className="font-medium text-lg">Alle geschlossen</span><span className="text-sm opacity-70">Kein Fenster ist aktuell geöffnet</span></div>)}
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="p-6 pb-2 flex justify-between items-start">
+           <div>
+             <h2 className="text-2xl font-bold text-white">{room.name}</h2>
+             <p className="text-slate-400 text-sm mt-1">Details & Analyse {analysis.isNight && '(Nachtmodus)'}</p>
+           </div>
+           <button onClick={onClose} className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors">
+             <X size={20}/>
+           </button>
         </div>
-        <div className="mt-6 flex justify-end"><button onClick={onClose} className="px-5 py-2 rounded-full bg-slate-700 text-white text-sm font-medium hover:bg-slate-600 transition-colors">Schließen</button></div>
+
+        <div className="p-6 pt-4 overflow-y-auto">
+          <div className={`mb-6 p-4 rounded-3xl flex items-center gap-4 ${analysis.score >= 80 ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-900/50' : analysis.score >= 60 ? 'bg-yellow-900/30 text-yellow-400 border border-yellow-900/50' : 'bg-red-900/30 text-red-400 border border-red-900/50'}`}>
+             <div className="text-4xl font-bold">{analysis.score}</div>
+             <div className="text-sm opacity-90 border-l border-current pl-4 leading-tight font-medium">
+               Klima-<br/>Score
+             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-6">
+             <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                <div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Thermometer size={14}/> Temperatur</div>
+                <div className="text-2xl font-medium text-white">{room.temp}°C</div>
+                <div className="text-[10px] text-slate-500 mt-1">Ziel: {limits.tempMin}-{limits.tempMax}°</div>
+             </div>
+             
+             <div className="bg-slate-800 p-4 rounded-2xl border border-slate-700">
+                <div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Droplets size={14}/> Feuchte</div>
+                <div className="text-2xl font-medium text-white">{room.humidity}%</div>
+                <div className="text-[10px] text-slate-500 mt-1">Taupunkt: {analysis.dewPoint}°</div>
+             </div>
+
+             {room.hasCo2 && (
+               <div className="col-span-2 bg-slate-800 p-4 rounded-2xl border border-slate-700 flex justify-between items-center">
+                  <div>
+                    <div className="flex items-center gap-2 text-slate-400 text-xs mb-1"><Wind size={14}/> CO2 Belastung</div>
+                    <div className="text-xl font-medium text-white">{room.co2} ppm</div>
+                  </div>
+                  <div className={`px-3 py-1 rounded-full text-xs font-bold ${room.co2 < 1000 ? 'bg-emerald-900/50 text-emerald-400' : 'bg-red-900/50 text-red-400'}`}>
+                     {room.co2 < 1000 ? 'Gut' : 'Schlecht'}
+                  </div>
+               </div>
+             )}
+          </div>
+
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Empfehlungen</h3>
+          <div className="space-y-3">
+             {analysis.recommendations.length > 0 ? analysis.recommendations.map((rec, i) => (
+                <div key={i} className={`flex gap-3 p-3 rounded-2xl items-start ${rec.includes('Noch') ? 'bg-blue-900/30 text-blue-200 border border-blue-900/50' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}>
+                   <div className="mt-0.5 opacity-70">
+                      {rec.includes('Klima') || rec.includes('AC') ? <Snowflake size={16}/> : rec.includes('Querlüften') ? <ArrowRightLeft size={16}/> : rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}
+                   </div>
+                   <div className="text-sm font-medium">{rec}</div>
+                </div>
+             )) : (
+               <div className="flex gap-3 p-4 rounded-2xl bg-emerald-900/20 text-emerald-400 border border-emerald-900/30 items-center">
+                  <CheckCircle size={20} />
+                  <span className="font-medium text-sm">Perfektes Klima.</span>
+               </div>
+             )}
+          </div>
+
+           <div className="mt-6 pt-6 border-t border-slate-800 space-y-3">
+              {room.hasWindow && (
+                <div className="flex justify-between items-center text-sm">
+                    <span className="text-slate-500">Fenster</span>
+                    <div className="flex items-center gap-2">
+                      {room.windowOpen ? (
+                        <span className="flex items-center gap-2 text-blue-400 font-medium px-3 py-1 bg-blue-900/20 rounded-full border border-blue-900/30">
+                          <Wind size={12}/> Offen
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">Geschlossen</span>
+                      )}
+                    </div>
+                </div>
+              )}
+           </div>
+        </div>
       </div>
     </div>
   );
@@ -891,7 +990,6 @@ export default function App() {
 
   const { refresh, enableDemoMode, setTemperature, setHvacMode } = useHomeAssistant();
 
-  // Data fetching hook usage merged here
   useEffect(() => {
     const fetchData = async () => {
       if (!HA_URL || !HA_TOKEN) {
@@ -1085,7 +1183,6 @@ export default function App() {
     });
   }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings, timerExtensions]);
 
-  // Install Prompt
   useEffect(() => {
     const handler = (e) => { e.preventDefault(); setInstallPrompt(e); };
     window.addEventListener('beforeinstallprompt', handler);
