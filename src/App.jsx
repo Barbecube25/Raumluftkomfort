@@ -34,8 +34,7 @@ import {
   Snowflake,
   ChevronDown,
   ChevronUp,
-  Palmtree,
-  History // Neu: Icon für Historie
+  Palmtree
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -236,21 +235,27 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
     
     if (!room.windowOpen) {
-       if (room.targetTemp !== null && room.targetTemp !== undefined) {
+       // NEU: Erweiterte Prüfung für Heizungsstatus
+       if (room.hvacMode === 'off') {
+           recommendations.push('Heizung ist AUS (Bitte einschalten!)');
+       } else if (room.targetTemp !== null && room.targetTemp !== undefined) {
            if (room.targetTemp < limits.tempMin) {
                recommendations.push(`Thermostat zu niedrig (steht auf ${room.targetTemp}°)`);
            }
+           // else: Thermostat passt, Raum heizt vermutlich gerade auf -> Keine Meldung
        } else {
            recommendations.push('Heizung prüfen');
        }
     }
   } else if (room.temp > limits.tempMax) {
+    // Zu warm - Nachtabsenkung Logik
     const nightTolerance = 2.0; 
     const isSignificantlyWarm = !isNight || (room.temp > limits.tempMax + nightTolerance);
 
     if (isSignificantlyWarm) {
+        // Nachts weniger Abzug für Wärme, tagsüber mehr
         score -= isNight ? 10 : 20;
-        issues.push({ type: 'temp', status: 'high', msg: isNight ? 'Zu warm (Nacht)' : 'Zu warm' });
+        issues.push({ type: 'temp', status: 'high', msg: isNight ? 'Warm (Nacht)' : 'Zu warm' });
         
         if (outside.temp >= room.temp - 0.5) { 
             if (AC_CONNECTED_ROOMS.includes(room.id)) {
@@ -266,6 +271,7 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
             recommendations.push(isNight ? 'Fenster auf zum Abkühlen' : 'Heizung runterdrehen / Lüften');
         }
     } else {
+        // Nachts leicht zu warm -> kaum Abzug
         score -= 2;
     }
   }
@@ -278,7 +284,8 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
     issues.push({ type: 'hum', status: 'low', msg: 'Trockene Luft' });
     recommendations.push('Luftbefeuchter nutzen');
   } else if (room.humidity > limits.humMax) {
-    const isVeryHigh = room.humidity > limits.humMax + 10; 
+    // Abgestufter Abzug bei Feuchtigkeit
+    const isVeryHigh = room.humidity > limits.humMax + 10; // z.B. > 70%
     score -= isVeryHigh ? 30 : 15;
     issues.push({ type: 'hum', status: 'high', msg: isVeryHigh ? 'Zu feucht (kritisch)' : 'Leicht erhöht' });
     
@@ -415,6 +422,7 @@ const useHomeAssistant = () => {
         
         let lastOpen = room.lastWindowOpen;
         if (wOpen && wSensor) {
+            // Keep existing timestamp if window still open to avoid reset
             if (room.windowOpen) lastOpen = room.lastWindowOpen;
             else lastOpen = wSensor.last_changed;
         }
@@ -451,18 +459,18 @@ const useHomeAssistant = () => {
   };
 
   const setTemperature = async (entityId, newTemp) => {
-    if (isDemoMode) {
-      setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, targetTemp: newTemp} : r));
-      return;
-    }
+    // 1. Optimistic Update (Sofort anzeigen)
+    setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, targetTemp: newTemp} : r));
+
+    if (isDemoMode) return;
 
     try {
+      // 2. API Call im Hintergrund
       await fetch(`${HA_URL}/api/services/climate/set_temperature`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ entity_id: entityId, temperature: newTemp })
       });
-      setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, targetTemp: newTemp} : r));
     } catch (e) {
       console.error("Set Temp Error", e);
       alert("Fehler beim Senden an Home Assistant");
@@ -470,17 +478,17 @@ const useHomeAssistant = () => {
   };
 
   const setHvacMode = async (entityId, newMode) => {
-    if (isDemoMode) {
-      setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, hvacMode: newMode} : r));
-      return;
-    }
+    // 1. Optimistic Update
+    setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, hvacMode: newMode} : r));
+
+    if (isDemoMode) return;
+
     try {
       await fetch(`${HA_URL}/api/services/climate/set_hvac_mode`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ entity_id: entityId, hvac_mode: newMode })
       });
-      setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, hvacMode: newMode} : r));
     } catch (e) {
       console.error("Set Mode Error", e);
       alert("Fehler beim Senden an Home Assistant");
@@ -1001,73 +1009,6 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
     }
   };
 
-  const [windowHistory, setWindowHistory] = useState([]);
-  const [isLoadingWindowHistory, setIsLoadingWindowHistory] = useState(false);
-  
-  const fetchWindowHistory = async (entityId) => {
-      if (!HA_URL || !HA_TOKEN || !entityId) return;
-      setIsLoadingWindowHistory(true);
-      try {
-          const endTime = new Date();
-          const startTime = new Date(endTime.getTime() - 48 * 60 * 60 * 1000); // Last 48h
-          const url = `${HA_URL}/api/history/period/${startTime.toISOString()}?filter_entity_id=${entityId}&end_time=${endTime.toISOString()}`;
-          const response = await fetch(url, {
-             headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json' },
-          });
-          if (!response.ok) throw new Error('History fetch failed');
-          const data = await response.json();
-          if(data && data.length > 0) {
-              const events = data[0];
-              const historyList = [];
-              let openStart = null;
-  
-              for(let i=0; i<events.length; i++) {
-                  const evt = events[i];
-                  if(evt.state === 'on' && !openStart) {
-                      openStart = new Date(evt.last_changed);
-                  } else if (evt.state === 'off' && openStart) {
-                      const end = new Date(evt.last_changed);
-                      const durationMin = Math.round((end - openStart) / 60000);
-                      if (durationMin > 0) {
-                           historyList.push({
-                               start: openStart,
-                               end: end,
-                               duration: durationMin
-                           });
-                      }
-                      openStart = null;
-                  }
-              }
-              // Add current open session if exists
-              if(openStart) {
-                   const now = new Date();
-                   const durationMin = Math.round((now - openStart) / 60000);
-                   historyList.push({
-                        start: openStart,
-                        end: null, // Still open
-                        duration: durationMin
-                   });
-              }
-              // Sort newest first
-              setWindowHistory(historyList.reverse().slice(0, 5));
-          }
-      } catch(e) {
-          console.error("Window history error", e);
-      } finally {
-          setIsLoadingWindowHistory(false);
-      }
-  };
-  
-  useEffect(() => {
-      if(room.hasWindow) {
-         const map = SENSOR_MAPPING[room.id];
-         if(map && map.window) {
-             fetchWindowHistory(map.window);
-         }
-      }
-  }, [room]);
-
-
   const toggleChart = (type) => {
     if (activeChart === type) {
       setActiveChart(null);
@@ -1193,55 +1134,9 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
                 <div key={i} className={`flex gap-3 p-3 rounded-2xl items-start ${rec.includes('Noch') ? 'bg-blue-900/30 text-blue-200 border border-blue-900/50' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}><div className="mt-0.5 opacity-70">{rec.includes('Klima') || rec.includes('AC') ? <Snowflake size={16}/> : rec.includes('Querlüften') ? <ArrowRightLeft size={16}/> : rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}</div><div className="text-sm font-medium">{rec}</div></div>
              )) : (<div className="flex gap-3 p-4 rounded-2xl bg-emerald-900/20 text-emerald-400 border border-emerald-900/30 items-center"><CheckCircle size={20} /><span className="font-medium text-sm">Perfektes Klima.</span></div>)}
           </div>
-           
-           {/* Fenster Status Section */}
            <div className="mt-6 pt-6 border-t border-slate-800 space-y-3">
-              {room.hasWindow && (
-                  <div className="flex flex-col gap-3">
-                      <div className="flex justify-between items-center text-sm">
-                          <span className="text-slate-500">Fenster</span>
-                          <div className="flex items-center gap-2">
-                             {room.windowOpen ? (
-                                <span className="flex items-center gap-2 text-blue-400 font-medium px-3 py-1 bg-blue-900/20 rounded-full border border-blue-900/30">
-                                   <Wind size={12}/> Offen
-                                </span>
-                             ) : (
-                                <span className="text-slate-400">Geschlossen</span>
-                             )}
-                          </div>
-                      </div>
-                      
-                      {/* Window History Log */}
-                      {room.hasWindow && (
-                          <div className="bg-slate-950/30 rounded-xl p-3 border border-slate-800/50 mt-2">
-                             <div className="flex items-center gap-2 text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">
-                                <History size={12}/> Lüftungshistorie
-                             </div>
-                             {isLoadingWindowHistory ? (
-                                <div className="text-xs text-slate-600 text-center py-2">Lade...</div>
-                             ) : windowHistory.length > 0 ? (
-                                <div className="space-y-2">
-                                   {windowHistory.map((entry, idx) => (
-                                      <div key={idx} className="flex justify-between items-center text-xs text-slate-300">
-                                         <span>
-                                            {entry.end ? new Date(entry.start).toLocaleDateString('de-DE', {weekday: 'short'}) + ', ' : ''}
-                                            {new Date(entry.start).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                         </span>
-                                         <span className={`${!entry.end ? 'text-blue-400 font-bold' : 'opacity-60'}`}>
-                                            {entry.end ? `${entry.duration} Min` : 'Offen'}
-                                         </span>
-                                      </div>
-                                   ))}
-                                </div>
-                             ) : (
-                                <div className="text-xs text-slate-600 text-center py-2">Keine Daten (48h)</div>
-                             )}
-                          </div>
-                      )}
-                  </div>
-              )}
+              {room.hasWindow && (<div className="flex justify-between items-center text-sm"><span className="text-slate-500">Fenster</span><div className="flex items-center gap-2">{room.windowOpen ? (<span className="flex items-center gap-2 text-blue-400 font-medium px-3 py-1 bg-blue-900/20 rounded-full border border-blue-900/30"><Wind size={12}/> Offen</span>) : (<span className="text-slate-400">Geschlossen</span>)}</div></div>)}
            </div>
-
         </div>
       </div>
     </div>
