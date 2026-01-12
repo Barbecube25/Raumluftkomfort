@@ -235,14 +235,12 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
     
     if (!room.windowOpen) {
-       // NEU: Erweiterte Prüfung für Heizungsstatus
        if (room.hvacMode === 'off') {
            recommendations.push('Heizung ist AUS (Bitte einschalten!)');
        } else if (room.targetTemp !== null && room.targetTemp !== undefined) {
            if (room.targetTemp < limits.tempMin) {
                recommendations.push(`Thermostat zu niedrig (steht auf ${room.targetTemp}°)`);
            }
-           // else: Thermostat passt, Raum heizt vermutlich gerade auf -> Keine Meldung
        } else {
            recommendations.push('Heizung prüfen');
        }
@@ -459,7 +457,7 @@ const useHomeAssistant = () => {
   };
 
   const setTemperature = async (entityId, newTemp) => {
-    // 1. Optimistic Update (Sofort anzeigen)
+    // 1. Optimistic Update (Sofort anzeigen, VOR dem API Call)
     setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, targetTemp: newTemp} : r));
 
     if (isDemoMode) return;
@@ -478,7 +476,7 @@ const useHomeAssistant = () => {
   };
 
   const setHvacMode = async (entityId, newMode) => {
-    // 1. Optimistic Update
+    // 1. Optimistic Update (Sofort anzeigen, VOR dem API Call)
     setRooms(prev => prev.map(r => r.climateEntity === entityId ? {...r, hvacMode: newMode} : r));
 
     if (isDemoMode) return;
