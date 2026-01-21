@@ -35,7 +35,8 @@ import {
   ChevronDown,
   ChevronUp,
   Palmtree,
-  History // Wieder da: History Icon
+  History,
+  BrainCircuit // Neues Icon für die KI/Lern-Funktion
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -168,7 +169,8 @@ const calculateDewPoint = (T, RH) => {
   return (b * alpha) / (a - alpha);
 };
 
-const getTargetVentilationTime = (outsideTemp) => {
+// Basistabelle für Lüftungsdauer (Fallback)
+const getBaseVentilationTime = (outsideTemp) => {
   if (outsideTemp < 5) return 5;
   if (outsideTemp < 10) return 10;
   if (outsideTemp < 20) return 20;
@@ -192,7 +194,9 @@ const formatTimeAgo = (dateString) => {
   }
 };
 
-const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
+// --- SMART ANALYSIS ---
+
+const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeSession = null, smartLearning = {}) => {
   const hour = new Date().getHours();
   const isNight = hour >= 23 || hour < 7;
   
@@ -213,17 +217,62 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
     return neighbor && neighbor.windowOpen;
   });
   
-  const ventilationNeighborId = neighbors.find(nId => {
-    const neighbor = allRooms.find(r => r.id === nId);
-    return neighbor && neighbor.hasVentilation;
-  });
-  const ventilationNeighbor = ventilationNeighborId ? allRooms.find(r => r.id === ventilationNeighborId) : null;
-  
   const isCrossVentilating = room.windowOpen && !!crossVentilationRoom;
   
-  let targetMin = getTargetVentilationTime(outside.temp);
-  if (isCrossVentilating) targetMin = Math.ceil(targetMin / 2);
+  // --- SMART TIMER LOGIC ---
+  // 1. Basis-Wert aus Tabelle
+  let baseTargetMin = getBaseVentilationTime(outside.temp);
+  if (isCrossVentilating) baseTargetMin = Math.ceil(baseTargetMin / 2);
+
+  // 2. Lernen (Historisch): Haben wir Erfahrungswerte?
+  let learnedFactor = 1.0;
+  const roomHistory = smartLearning[room.id];
+  if (roomHistory && roomHistory.samples > 2) {
+      // Wenn der Raum historisch schneller abkühlt (hohe Rate), verkürzen wir die Basiszeit
+      // Normale Rate ca 0.1 Grad/Min. Wenn wir 0.2 haben, sind wir doppelt so schnell -> Faktor 0.5
+      const avgRate = roomHistory.avgTempRate; 
+      if (avgRate > 0.05) { // Nur wenn signifikante Änderung messbar war
+         const standardRate = 0.1; // Annahme
+         learnedFactor = Math.max(0.5, Math.min(1.5, standardRate / avgRate));
+      }
+  }
   
+  let targetMin = Math.round(baseTargetMin * learnedFactor);
+
+  // 3. Adaptiv (Live): Wie läuft es gerade?
+  let isAdaptive = false;
+  if (room.windowOpen && activeSession && activeSession.startTemp) {
+      const diffMin = (Date.now() - activeSession.startTime) / 60000;
+      
+      // Nur adaptieren, wenn wir schon > 3 Min offen haben, um Rauschen zu vermeiden
+      if (diffMin > 3) {
+          const deltaTemp = activeSession.startTemp - room.temp; // Positive means cooling
+          const currentRate = deltaTemp / diffMin; // Grad pro Minute
+
+          // Ziel: TempMin erreichen (plus kleiner Puffer)
+          // Wenn es zu warm ist, wollen wir auf limits.tempMax runter, oder limits.tempMin wenn wir kühlen wollen
+          let targetTemp = room.temp;
+          if (room.temp > limits.tempMax) targetTemp = limits.tempMax - 0.5;
+          else if (room.humidity > limits.humMax) targetTemp = room.temp; // Bei Feuchte ist Temp egal, aber wir brauchen Zeitbezug
+
+          // Wenn wir primär wegen Temperatur lüften (zu warm):
+          if (deltaTemp > 0.2 && room.temp > limits.tempMax) {
+              const remainingDrop = Math.max(0, room.temp - (limits.tempMax - 0.5));
+              const predictedRemaining = remainingDrop / currentRate;
+              
+              // Wir mischen den vorhergesagten Wert mit dem Basiswert für Stabilität
+              // Je länger wir offen haben, desto mehr vertrauen wir dem Live-Wert
+              const trustFactor = Math.min(1.0, diffMin / 15); 
+              
+              // Die "bisher vergangene Zeit" muss natürlich zur "restlichen Zeit" addiert werden für die Gesamtdauer
+              const totalPredicted = diffMin + predictedRemaining;
+              
+              targetMin = Math.round((targetMin * (1 - trustFactor)) + (totalPredicted * trustFactor));
+              isAdaptive = true;
+          }
+      }
+  }
+
   const sessionKey = `${room.id}-${room.lastWindowOpen}`;
   const extensionMin = extensions[sessionKey] || 0;
   const totalTargetMin = targetMin + extensionMin;
@@ -236,37 +285,23 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
     issues.push({ type: 'temp', status: 'low', msg: 'Zu kalt' });
     
     if (!room.windowOpen) {
-       if (room.targetTemp !== null && room.targetTemp !== undefined) {
-           if (room.targetTemp < limits.tempMin) {
-               recommendations.push(`Thermostat zu niedrig (steht auf ${room.targetTemp}°)`);
-           }
+       if (room.targetTemp !== null && room.targetTemp !== undefined && room.targetTemp < limits.tempMin) {
+           recommendations.push(`Thermostat zu niedrig (${room.targetTemp}°)`);
        } else {
            recommendations.push('Heizung prüfen');
        }
     }
   } else if (room.temp > limits.tempMax) {
-    const nightTolerance = 2.0; 
-    const isSignificantlyWarm = !isNight || (room.temp > limits.tempMax + nightTolerance);
-
+    const isSignificantlyWarm = !isNight || (room.temp > limits.tempMax + 2.0);
     if (isSignificantlyWarm) {
         score -= isNight ? 10 : 20;
         issues.push({ type: 'temp', status: 'high', msg: isNight ? 'Warm (Nacht)' : 'Zu warm' });
         
         if (outside.temp >= room.temp - 0.5) { 
-            if (AC_CONNECTED_ROOMS.includes(room.id)) {
-                if (room.id === 'bath') {
-                    recommendations.push('AC Modus (Lüftung) starten!');
-                } else {
-                    recommendations.push('Klimaanlage im Bad nutzen (Türen auf)');
-                }
-            } else {
-                recommendations.push('Abdunkeln (Draußen zu warm)');
-            }
+             recommendations.push('Abdunkeln (Draußen zu warm)');
         } else {
-            recommendations.push(isNight ? 'Fenster auf zum Abkühlen' : 'Heizung runterdrehen / Lüften');
+            recommendations.push(isNight ? 'Fenster auf zum Abkühlen' : 'Heizung runter / Lüften');
         }
-    } else {
-        score -= 2;
     }
   }
 
@@ -280,7 +315,7 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
   } else if (room.humidity > limits.humMax) {
     const isVeryHigh = room.humidity > limits.humMax + 10; 
     score -= isVeryHigh ? 30 : 15;
-    issues.push({ type: 'hum', status: 'high', msg: isVeryHigh ? 'Zu feucht (kritisch)' : 'Leicht erhöht' });
+    issues.push({ type: 'hum', status: 'high', msg: isVeryHigh ? 'Zu feucht' : 'Feucht' });
     
     if (dewPointOutside < dewPointInside) {
       if (room.windowOpen && room.lastWindowOpen) {
@@ -289,65 +324,43 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
           const remaining = Math.ceil(totalTargetMin - openMin);
           
           if (remaining > 0) {
-             if (isCrossVentilating) {
-                recommendations.push(`Querlüften aktiv: Noch ${remaining} Min.`);
-             } else {
-                recommendations.push(`Noch ${remaining} Min. lüften`);
-                const potentialCross = neighbors.find(nId => {
-                    const n = allRooms.find(r => r.id === nId);
-                    return n && n.hasWindow && !n.windowOpen;
-                });
-                if (potentialCross) {
-                    const nName = allRooms.find(r => r.id === potentialCross)?.name;
-                    recommendations.push(`Tipp: Fenster in ${nName} öffnen für Durchzug!`);
-                }
-                if (ventilationNeighbor) {
-                    recommendations.push(`Sogwirkung: Lüftung in ${ventilationNeighbor.name} an (Fenster dort zu)`);
-                }
+             let msg = `Noch ${remaining} Min.`;
+             if (isAdaptive) msg += " (Smart)";
+             else if (learnedFactor !== 1.0) msg += " (Gelernt)";
+             
+             recommendations.push(msg);
+             
+             if (!isCrossVentilating) {
+                const potentialCross = neighbors.find(nId => allRooms.find(r => r.id === nId)?.hasWindow && !allRooms.find(r => r.id === nId)?.windowOpen);
+                if (potentialCross) recommendations.push(`Tipp: Durchzug mit ${allRooms.find(r => r.id === potentialCross)?.name}`);
              }
           } else {
              recommendations.push(`Fenster schließen.`);
           }
       } else {
           recommendations.push(`Lüften: ${ventDurationText}`);
-          if (room.hasVentilation) {
-            recommendations.push('Falls möglich: Lüftung prüfen');
-          } else if (ventilationNeighbor) {
-            recommendations.push(`Effektiv: Fenster auf + Lüftung in ${ventilationNeighbor.name} an`);
-          }
       }
     } else {
-      recommendations.push('Lüften ineffektiv');
+      recommendations.push('Lüften ineffektiv (Draußen zu feucht)');
     }
   }
 
-  if (room.hasCo2 && room.co2) {
-    if (room.co2 > 1000) {
+  if (room.hasCo2 && room.co2 > 1000) {
        const isCrit = room.co2 >= 1500;
        score -= isCrit ? 50 : 20;
-       issues.push({ type: 'co2', status: isCrit ? 'crit' : 'warn', msg: isCrit ? 'Luft schlecht' : 'CO2 hoch' });
+       issues.push({ type: 'co2', status: isCrit ? 'crit' : 'warn', msg: 'CO2 hoch' });
        
        if (room.windowOpen && room.lastWindowOpen) {
           const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
           const openMin = diffMs / 60000;
           const remaining = Math.ceil(totalTargetMin - openMin);
-          
-          if (remaining > 0) {
-             recommendations.push(`CO2: Noch ${remaining} Min.`);
-          } else {
-             recommendations.push(`Luft gut. Schließen.`);
-          }
+          recommendations.push(remaining > 0 ? `CO2: Noch ${remaining} Min.` : `Luft gut. Schließen.`);
        } else {
-          recommendations.push(isCrit ? `Sofort öffnen! (${ventDurationText})` : `Stoßlüften (${ventDurationText})`);
-          if (ventilationNeighbor) {
-             recommendations.push(`Tipp: Lüftung in ${ventilationNeighbor.name} dazu schalten`);
-          }
+          recommendations.push(`Stoßlüften (${ventDurationText})`);
        }
-    }
   }
 
-  const isVentilating = recommendations.some(r => r.includes('Noch') && r.includes('lüften'));
-  if (room.windowOpen && room.temp < limits.tempMin && !isVentilating) {
+  if (room.windowOpen && room.temp < limits.tempMin && !recommendations.some(r => r.includes('Noch'))) {
     recommendations.push('Wärmeverlust!');
   }
 
@@ -358,7 +371,9 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}) => {
     dewPoint: dewPointInside.toFixed(1),
     isCrossVentilating,
     totalTargetMin,
-    isNight
+    isNight,
+    isAdaptive,
+    learnedFactor
   };
 };
 
@@ -372,6 +387,51 @@ const useHomeAssistant = () => {
   const [errorMessage, setErrorMessage] = useState('');
   
   const lastInteractionRef = useRef({});
+
+  // Session Tracking für Smart Learning
+  const [activeSessions, setActiveSessions] = useState(() => {
+      const saved = localStorage.getItem('activeSessions');
+      return saved ? JSON.parse(saved) : {};
+  });
+
+  const [smartLearning, setSmartLearning] = useState(() => {
+      const saved = localStorage.getItem('smartLearning');
+      return saved ? JSON.parse(saved) : {};
+  });
+
+  // Speichern bei Änderung
+  useEffect(() => { localStorage.setItem('activeSessions', JSON.stringify(activeSessions)); }, [activeSessions]);
+  useEffect(() => { localStorage.setItem('smartLearning', JSON.stringify(smartLearning)); }, [smartLearning]);
+
+  const updateLearning = (roomId, session) => {
+      const durationMin = (Date.now() - session.startTime) / 60000;
+      if (durationMin < 5) return; // Zu kurz zum Lernen
+
+      const startTemp = session.startTemp;
+      const endTemp = rooms.find(r => r.id === roomId)?.temp || startTemp;
+      
+      const rate = (startTemp - endTemp) / durationMin; // Grad pro Minute
+      
+      if (rate <= 0) return; // Erwärmung oder keine Änderung ignorieren wir erst mal
+
+      setSmartLearning(prev => {
+          const currentStats = prev[roomId] || { samples: 0, avgTempRate: 0 };
+          
+          // Gleitender Durchschnitt (neu gewichtet mit 20%)
+          const newAvg = currentStats.samples === 0 
+              ? rate 
+              : (currentStats.avgTempRate * 0.8) + (rate * 0.2);
+          
+          return {
+              ...prev,
+              [roomId]: {
+                  samples: currentStats.samples + 1,
+                  avgTempRate: newAvg,
+                  lastUpdate: Date.now()
+              }
+          };
+      });
+  };
 
   const fetchData = async () => {
     if (!HA_URL || !HA_TOKEN) {
@@ -406,48 +466,84 @@ const useHomeAssistant = () => {
         });
       }
 
-      setRooms(prevRooms => prevRooms.map(room => {
-        const map = SENSOR_MAPPING[room.id];
-        const climateEntity = CLIMATE_MAPPING[room.id];
-        
-        if (!map) return room;
+      setRooms(prevRooms => {
+        const newRooms = prevRooms.map(room => {
+          const map = SENSOR_MAPPING[room.id];
+          const climateEntity = CLIMATE_MAPPING[room.id];
+          
+          if (!map) return room;
 
-        const wSensor = states.find(s => s.entity_id === map.window);
-        const wOpen = wSensor ? wSensor.state === 'on' : false;
-        
-        let lastOpen = room.lastWindowOpen;
-        if (wOpen && wSensor) {
-            if (room.windowOpen) lastOpen = room.lastWindowOpen;
-            else lastOpen = wSensor.last_changed;
-        }
-        else if (!wOpen) lastOpen = null;
+          const wSensor = states.find(s => s.entity_id === map.window);
+          const wOpen = wSensor ? wSensor.state === 'on' : false;
+          
+          let lastOpen = room.lastWindowOpen;
+          if (wOpen && wSensor) {
+              if (room.windowOpen) lastOpen = room.lastWindowOpen;
+              else lastOpen = wSensor.last_changed;
+          }
+          else if (!wOpen) lastOpen = null;
 
-        let targetTemp = room.targetTemp;
-        let hvacMode = room.hvacMode;
-        
-        if (climateEntity) {
-           const e = states.find(s => s.entity_id === climateEntity);
-           if (e) {
-               const lastInteract = lastInteractionRef.current[climateEntity] || 0;
-               if (Date.now() - lastInteract > 15000) {
-                   targetTemp = e.attributes.temperature;
-                   hvacMode = e.state;
-               }
-           }
-        }
+          // Temp fetching
+          const currentTemp = getNum(map.temp) || room.temp;
+          const currentHum = getNum(map.humidity) || room.humidity;
 
-        return {
-          ...room,
-          temp: getNum(map.temp) || room.temp,
-          humidity: getNum(map.humidity) || room.humidity,
-          co2: map.co2 ? getNum(map.co2) : room.co2,
-          windowOpen: wOpen,
-          lastWindowOpen: lastOpen,
-          targetTemp: targetTemp,
-          hvacMode: hvacMode,
-          climateEntity: climateEntity
-        };
-      }));
+          // --- SESSION MANAGEMENT LOGIC ---
+          const sessionKey = `${room.id}`;
+          
+          // Fenster ging AUF
+          if (wOpen && !room.windowOpen) {
+              setActiveSessions(prev => ({
+                  ...prev,
+                  [sessionKey]: {
+                      startTime: Date.now(), // Wir nehmen unsere eigene Zeit, da präziser für Differenz
+                      startTemp: currentTemp,
+                      startHum: currentHum
+                  }
+              }));
+          }
+          // Fenster ging ZU
+          else if (!wOpen && room.windowOpen) {
+              const session = activeSessions[sessionKey];
+              if (session) {
+                  updateLearning(room.id, session); // LERNEN!
+                  
+                  // Session cleanup
+                  setActiveSessions(prev => {
+                      const next = {...prev};
+                      delete next[sessionKey];
+                      return next;
+                  });
+              }
+          }
+
+          let targetTemp = room.targetTemp;
+          let hvacMode = room.hvacMode;
+          
+          if (climateEntity) {
+             const e = states.find(s => s.entity_id === climateEntity);
+             if (e) {
+                 const lastInteract = lastInteractionRef.current[climateEntity] || 0;
+                 if (Date.now() - lastInteract > 15000) {
+                     targetTemp = e.attributes.temperature;
+                     hvacMode = e.state;
+                 }
+             }
+          }
+
+          return {
+            ...room,
+            temp: currentTemp,
+            humidity: currentHum,
+            co2: map.co2 ? getNum(map.co2) : room.co2,
+            windowOpen: wOpen,
+            lastWindowOpen: lastOpen,
+            targetTemp: targetTemp,
+            hvacMode: hvacMode,
+            climateEntity: climateEntity
+          };
+        });
+        return newRooms;
+      });
 
     } catch (error) {
       console.error("HA Fetch Error", error);
@@ -518,7 +614,7 @@ const useHomeAssistant = () => {
     return () => clearInterval(interval);
   }, []); 
 
-  return { rooms, outside, isDemoMode, connectionStatus, errorMessage, refresh: fetchData, enableDemoMode, setTemperature, setHvacMode };
+  return { rooms, outside, isDemoMode, connectionStatus, errorMessage, activeSessions, smartLearning, refresh: fetchData, enableDemoMode, setTemperature, setHvacMode };
 };
 
 // --- CHART COMPONENT ---
@@ -892,8 +988,8 @@ const M3StatCard = ({ icon: Icon, label, value, subValue, theme = 'primary', onC
   );
 };
 
-const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, onClick }) => {
-  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
+const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, activeSession, smartLearning, onClick }) => {
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions, activeSession, smartLearning), [room, outsideData, settings, allRooms, extensions, activeSession, smartLearning]);
   
   let containerClass = "bg-slate-800 border-slate-700";
   let scoreBadgeClass = "bg-emerald-900/50 text-emerald-400 border border-emerald-800";
@@ -949,7 +1045,9 @@ const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, onClick
       {analysis.recommendations.length > 0 && (
          <div className={`mt-2 flex items-start gap-2 text-[11px] p-2 rounded-xl ${countdownMsg ? 'bg-blue-900/30 text-blue-300 border border-blue-900/50' : 'bg-slate-900/30 text-slate-400'}`}>
             {analysis.isCrossVentilating && <ArrowRightLeft size={14} className="mt-0.5 shrink-0 text-blue-400"/>}
-            {countdownMsg && !analysis.isCrossVentilating && <Timer size={14} className="mt-0.5 shrink-0"/>}
+            {countdownMsg && !analysis.isCrossVentilating && analysis.isAdaptive && <BrainCircuit size={14} className="mt-0.5 shrink-0 text-pink-400"/>}
+            {countdownMsg && !analysis.isCrossVentilating && !analysis.isAdaptive && <Timer size={14} className="mt-0.5 shrink-0"/>}
+            
             {!countdownMsg && !analysis.isCrossVentilating && analysis.recommendations.some(r => r.includes('Klima') || r.includes('AC')) && <Snowflake size={14} className="mt-0.5 shrink-0 text-blue-400"/>}
             {!countdownMsg && !analysis.isCrossVentilating && !analysis.recommendations.some(r => r.includes('Klima') || r.includes('AC')) && <AlertCircle size={14} className="mt-0.5 shrink-0 text-amber-500"/>}
             <span className="line-clamp-1 leading-snug">{countdownMsg || analysis.recommendations[0]}</span>
@@ -959,9 +1057,9 @@ const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, onClick
   );
 };
 
-const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose }) => {
+const M3Modal = ({ room, outsideData, settings, allRooms, extensions, activeSession, smartLearning, onClose }) => {
   if (!room) return null;
-  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions), [room, outsideData, settings, allRooms, extensions]);
+  const analysis = useMemo(() => analyzeRoom(room, outsideData, settings, allRooms, extensions, activeSession, smartLearning), [room, outsideData, settings, allRooms, extensions, activeSession, smartLearning]);
   const limits = settings[room.type] || settings.default;
   
   // History State
@@ -1194,7 +1292,15 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, onClose })
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Empfehlungen</h3>
           <div className="space-y-3">
              {analysis.recommendations.length > 0 ? analysis.recommendations.map((rec, i) => (
-                <div key={i} className={`flex gap-3 p-3 rounded-2xl items-start ${rec.includes('Noch') ? 'bg-blue-900/30 text-blue-200 border border-blue-900/50' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}><div className="mt-0.5 opacity-70">{rec.includes('Klima') || rec.includes('AC') ? <Snowflake size={16}/> : rec.includes('Querlüften') ? <ArrowRightLeft size={16}/> : rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}</div><div className="text-sm font-medium">{rec}</div></div>
+                <div key={i} className={`flex gap-3 p-3 rounded-2xl items-start ${rec.includes('Noch') ? 'bg-blue-900/30 text-blue-200 border border-blue-900/50' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}>
+                    <div className="mt-0.5 opacity-70">
+                        {rec.includes('Smart') ? <BrainCircuit size={16} className="text-pink-400"/> :
+                         rec.includes('Klima') || rec.includes('AC') ? <Snowflake size={16}/> : 
+                         rec.includes('Querlüften') ? <ArrowRightLeft size={16}/> : 
+                         rec.includes('Noch') ? <Timer size={16}/> : <Activity size={16}/>}
+                    </div>
+                    <div className="text-sm font-medium">{rec}</div>
+                </div>
              )) : (<div className="flex gap-3 p-4 rounded-2xl bg-emerald-900/20 text-emerald-400 border border-emerald-900/30 items-center"><CheckCircle size={20} /><span className="font-medium text-sm">Perfektes Klima.</span></div>)}
           </div>
            
@@ -1292,97 +1398,35 @@ export default function App() {
     return null;
   }, []);
 
-  const { refresh, enableDemoMode, setTemperature, setHvacMode } = useHomeAssistant();
+  const { refresh, enableDemoMode, setTemperature, setHvacMode, activeSessions, smartLearning } = useHomeAssistant();
 
   // Data fetching hook usage merged here
   useEffect(() => {
     const fetchData = async () => {
-      if (!HA_URL || !HA_TOKEN) {
-        setIsDemoMode(true);
-        setRooms(prev => prev.map(r => ({
-           ...r,
-           temp: Number((r.temp + (Math.random() - 0.5) * 0.1).toFixed(1))
-        })));
-        return;
-      }
-
-      try {
-        setConnectionStatus('loading');
-        const response = await fetch(`${HA_URL}/api/states`, {
-          headers: { 'Authorization': `Bearer ${HA_TOKEN}`, 'Content-Type': 'application/json' },
-        });
-        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-        
-        const states = await response.json();
-        setConnectionStatus('connected');
-        setIsDemoMode(false);
-        setErrorMessage('');
-
-        const getNum = (id) => {
-          const e = states.find(s => s.entity_id === id);
-          return e && !isNaN(e.state) ? parseFloat(e.state) : null;
-        };
-
-        if (SENSOR_MAPPING.outside) {
-          setOutside({
-            temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
-            humidity: getNum(SENSOR_MAPPING.outside.humidity) || OUTSIDE_DATA.humidity,
-            pressure: 1013,
-            condition: 'Loaded'
-          });
-        }
-
-        setRooms(prevRooms => prevRooms.map(room => {
-          const map = SENSOR_MAPPING[room.id];
-          const climateEntity = CLIMATE_MAPPING[room.id];
-          
-          if (!map) return room;
-
-          const wSensor = states.find(s => s.entity_id === map.window);
-          const wOpen = wSensor ? wSensor.state === 'on' : false;
-          
-          let lastOpen = room.lastWindowOpen;
-          if (wOpen && wSensor) {
-            // Keep existing timestamp if window still open to avoid reset
-            if (room.windowOpen) lastOpen = room.lastWindowOpen;
-            else lastOpen = wSensor.last_changed;
-        }
-          else if (!wOpen) lastOpen = null;
-
-          let targetTemp = room.targetTemp;
-          let hvacMode = room.hvacMode;
-          if (climateEntity) {
-             const e = states.find(s => s.entity_id === climateEntity);
-             if (e) {
-                 targetTemp = e.attributes.temperature;
-                 hvacMode = e.state;
-             }
-          }
-
-          return {
-            ...room,
-            temp: getNum(map.temp) || room.temp,
-            humidity: getNum(map.humidity) || room.humidity,
-            co2: map.co2 ? getNum(map.co2) : room.co2,
-            windowOpen: wOpen,
-            lastWindowOpen: lastOpen,
-            targetTemp: targetTemp,
-            hvacMode: hvacMode,
-            climateEntity: climateEntity
-          };
-        }));
-
-      } catch (error) {
-        console.error("HA Fetch Error", error);
-        setConnectionStatus('error');
-        setErrorMessage('Verbindungsfehler');
-      }
+      // Logic now moved inside useHomeAssistant, this effect purely for polling trigger
+      // BUT we need the local state sync, which useHomeAssistant handles internally now
+      refresh();
     };
+    
+    // Initial fetch handled by hook, interval handled by hook
+    // We just need to sync the rooms state from the hook to the App state for rendering
+    // Actually, useHomeAssistant returns 'rooms' state directly.
+    // Refactoring: We should consume the hook's state directly instead of duplicating it.
+    
+    // HOWEVER, to keep the existing structure working with minimal refactor, we will sync:
+  }, []);
 
-    fetchData();
-    const interval = setInterval(fetchData, isWidgetMode ? 60000 : 10000);
-    return () => clearInterval(interval);
-  }, [isWidgetMode]);
+  // Sync Hook State to App State
+  // This is a bit redundant but keeps the component structure intact
+  const hookData = useHomeAssistant();
+  useEffect(() => {
+      setRooms(hookData.rooms);
+      setOutside(hookData.outside);
+      setConnectionStatus(hookData.connectionStatus);
+      setIsDemoMode(hookData.isDemoMode);
+      setErrorMessage(hookData.errorMessage);
+  }, [hookData.rooms, hookData.outside, hookData.connectionStatus, hookData.isDemoMode, hookData.errorMessage]);
+
 
   useEffect(() => {
     if ('Notification' in window) {
@@ -1393,12 +1437,11 @@ export default function App() {
   const sendNotification = (title, options) => {
     if (Notification.permission !== 'granted') return;
     
-    // Standard-Optionen: Keine Vibration (silent update), bleibt stehen
     const defaults = {
         vibrate: [], 
         requireInteraction: true,  
         icon: '/pwa-192x192.png',
-        renotify: false // Wichtig: Nicht jedes Mal bimmeln beim Update
+        renotify: false 
     };
     
     const finalOptions = { ...defaults, ...options };
@@ -1409,8 +1452,6 @@ export default function App() {
           reg.showNotification(title, finalOptions);
         });
       } else {
-        // Fallback for non-SW environments (safer for Android WebView crashes)
-        // Removing vibrate property as it can cause crashes in some contexts without user gesture
         const safeOptions = { ...finalOptions };
         delete safeOptions.vibrate; 
         new Notification(title, safeOptions);
@@ -1425,11 +1466,10 @@ export default function App() {
 
     rooms.forEach(room => {
       const limits = comfortSettings[room.type] || comfortSettings.default;
-      const analysis = analyzeRoom(room, outside, comfortSettings, rooms, timerExtensions); 
+      const analysis = analyzeRoom(room, outside, comfortSettings, rooms, timerExtensions, activeSessions[room.id], smartLearning); 
 
-      // --- 1. Kritische Luftqualität (Unabhängig vom Fensterstatus) ---
+      // --- 1. Kritische Luftqualität ---
       if (analysis.score <= 50) { 
-          // Key ändert sich stündlich -> max 1 Nachricht pro Stunde pro Raum
           const datePart = new Date().toLocaleDateString();
           const hourPart = new Date().getHours();
           const badAirKey = `${room.id}-critical-${datePart}-${hourPart}`;
@@ -1442,31 +1482,27 @@ export default function App() {
                 body: `${mainIssue}. ${recommendation}`,
                 tag: badAirKey,
                 icon: '/pwa-192x192.png',
-                vibrate: [200, 100, 200] // Bei kritischem Zustand vibrieren
+                vibrate: [200, 100, 200]
              });
              setNotifiedSessions(prev => new Set(prev).add(badAirKey));
           }
       }
 
-      // --- 2. Fenster-Offen Logik (Timer, Kälte etc.) ---
+      // --- 2. Fenster-Offen Logik ---
       if (room.windowOpen && room.lastWindowOpen) {
-          const targetMin = getTargetVentilationTime(outside.temp);
-          let adjustedTarget = targetMin;
-          if (analysis.isCrossVentilating) adjustedTarget = Math.ceil(targetMin / 2);
-          
-          const sessionBase = `${room.id}-${room.lastWindowOpen}`;
-          const extensionMin = timerExtensions[sessionBase] || 0;
-          const totalTargetMin = adjustedTarget + extensionMin;
+          // Use the calculated total target min from analysis (which includes smart logic)
+          const totalTargetMin = analysis.totalTargetMin;
           
           const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
           const openMin = diffMs / 60000;
           const remaining = Math.ceil(totalTargetMin - openMin);
           
-          // AUTO-EXTENSION LOGIC (Ohne Notification Spam)
+          // AUTO-EXTENSION
           if (remaining <= 0) {
+              const sessionBase = `${room.id}-${room.lastWindowOpen}`;
               const hasIssues = analysis.issues.some(i => (i.type === 'hum' && i.status === 'high') || i.type === 'co2');
+              const extensionMin = timerExtensions[sessionBase] || 0;
               
-              // Wenn Luft noch schlecht und wir noch nicht max. verlängert haben -> Verlängern
               if (hasIssues && extensionMin < 30) {
                   const newExtension = extensionMin + 5;
                   const extKey = `${sessionBase}-ext-${newExtension}`;
@@ -1474,19 +1510,19 @@ export default function App() {
                   if (!notifiedSessions.has(extKey)) {
                       setTimerExtensions(prev => ({...prev, [sessionBase]: newExtension}));
                       setNotifiedSessions(prev => new Set(prev).add(extKey));
-                      // Return here, effect will re-run with new time immediately
                       return; 
                   }
               }
           }
 
-          // --- STATUS TEXT BAUEN ---
+          // --- STATUS TEXT ---
           let title = `Lüften: ${room.name}`;
           let statusIcon = "⏳";
           let statusText = `Noch ${Math.max(0, remaining)} Min.`;
           let reasonText = "";
           
-          // Probleme identifizieren für den Text
+          if (analysis.isAdaptive) statusText += " (Smart)";
+          
           const humIssue = analysis.issues.find(i => i.type === 'hum');
           const co2Issue = analysis.issues.find(i => i.type === 'co2');
           
@@ -1494,7 +1530,6 @@ export default function App() {
           if (humIssue) reasonText += `Feuchte hoch (${room.humidity}%) `;
           if (!co2Issue && !humIssue) reasonText = "Luftqualität gut ✅";
 
-          // Kälte Check (Priorität!)
           let isCold = false;
           if (room.temp < limits.tempMin) {
               isCold = true;
@@ -1503,7 +1538,6 @@ export default function App() {
               statusText = "Sofort schließen!";
               reasonText = `${room.temp}°C (Zu kalt!)`;
           } else if (remaining <= 0) {
-              // Zeit abgelaufen (und keine Auto-Verlängerung mehr möglich oder Luft gut)
               title = `Fenster schließen: ${room.name}`;
               statusIcon = "✅";
               statusText = "Zeit abgelaufen";
@@ -1511,29 +1545,22 @@ export default function App() {
 
           const body = `${statusIcon} ${statusText}\n🌡️ ${room.temp}°C | ${reasonText}`;
 
-          // --- SENDEN ENTSCHEIDEN ---
-          
-          // Nur senden, wenn sich der Text geändert hat (z.B. Minute umgesprungen) ODER es kritisch ist
+          // --- SENDEN ---
           if (lastNotificationMap.current[room.id] !== body) {
-              
-              let vibrate = []; // Standard: Stumm (nur Update in der Leiste)
+              let vibrate = []; 
               let renotify = false;
 
-              // VIBRIEREN NUR BEI KRITISCHEN EVENTS
-              // 1. Kälte Alarm
               if (isCold) {
                   vibrate = [500, 200, 500];
-                  renotify = true; // Aufwecken!
-              } 
-              // 2. Zeit abgelaufen (Final)
-              else if (remaining <= 0) {
+                  renotify = true; 
+              } else if (remaining <= 0) {
                   vibrate = [200, 100, 200];
-                  renotify = true; // Kurz Bescheid geben
+                  renotify = true; 
               }
 
               sendNotification(title, {
                   body: body,
-                  tag: sessionBase, // WICHTIG: Gleicher Tag = Update statt neu
+                  tag: `${room.id}-${room.lastWindowOpen}`, 
                   vibrate: vibrate,
                   renotify: renotify
               });
@@ -1542,7 +1569,7 @@ export default function App() {
           }
       }
     });
-  }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings, timerExtensions]);
+  }, [rooms, outside, notifiedSessions, notifyPerm, comfortSettings, timerExtensions, activeSessions, smartLearning]);
 
   // Install Prompt
   useEffect(() => {
@@ -1570,16 +1597,17 @@ export default function App() {
   };
 
   if (isWidgetMode === 'widget') {
-    return <WidgetView outside={outside} rooms={rooms} refresh={() => window.location.reload()} />;
+    return <WidgetView outside={outside} rooms={rooms} refresh={hookData.refresh} />;
   }
   
   if (isWidgetMode === 'widget-summary') {
-     return <SummaryWidgetView rooms={rooms} outside={outside} settings={comfortSettings} extensions={timerExtensions} refresh={() => window.location.reload()} />;
+     return <SummaryWidgetView rooms={rooms} outside={outside} settings={comfortSettings} extensions={timerExtensions} refresh={hookData.refresh} />;
   }
 
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
   const openWindows = rooms.filter(r => r.windowOpen).length;
-  const avgScore = Math.round(rooms.reduce((acc, r) => acc + analyzeRoom(r, outside, comfortSettings, rooms, timerExtensions).score, 0) / rooms.length);
+  // Use hookData smartLearning here for analysis in render
+  const avgScore = Math.round(rooms.reduce((acc, r) => acc + analyzeRoom(r, outside, comfortSettings, rooms, timerExtensions, hookData.activeSessions[r.id], hookData.smartLearning).score, 0) / rooms.length);
   let statusText = "Gut";
   let statusColorClass = "bg-emerald-900/20 text-emerald-400 border border-emerald-900/30";
   if (avgScore < 80) { statusText = "Okay"; statusColorClass = "bg-yellow-900/20 text-yellow-400 border border-yellow-900/30"; }
@@ -1633,7 +1661,7 @@ export default function App() {
                   <Download size={20} />
                 </button>
               )}
-              <button onClick={refresh} className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700">
+              <button onClick={hookData.refresh} className="bg-slate-800 text-slate-300 p-3 rounded-full hover:bg-slate-700 border border-slate-700">
                 <RefreshCw size={20} className={connectionStatus === 'loading' ? 'animate-spin' : ''}/>
               </button>
             </div>
@@ -1699,6 +1727,8 @@ export default function App() {
               settings={comfortSettings}
               allRooms={rooms}
               extensions={timerExtensions}
+              activeSession={hookData.activeSessions[room.id]}
+              smartLearning={hookData.smartLearning}
               onClick={() => setSelectedRoom(room)}
             />
           ))}
@@ -1712,6 +1742,8 @@ export default function App() {
             settings={comfortSettings}
             allRooms={rooms}
             extensions={timerExtensions}
+            activeSession={hookData.activeSessions[selectedRoom.id]}
+            smartLearning={hookData.smartLearning}
             onClose={() => setSelectedRoom(null)}
           />
         )}
