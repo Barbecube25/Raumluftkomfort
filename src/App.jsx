@@ -461,7 +461,7 @@ const useHomeAssistant = () => {
       if (SENSOR_MAPPING.outside) {
         setOutside({
           temp: getNum(SENSOR_MAPPING.outside.temp) || OUTSIDE_DATA.temp,
-          humidity: getNum(SENSOR_MAPPING.outside.humidity) || OUTSIDE_DATA.humidity,
+          humidity: Math.round(getNum(SENSOR_MAPPING.outside.humidity) || OUTSIDE_DATA.humidity),
           pressure: 1013,
           condition: 'Loaded'
         });
@@ -486,7 +486,8 @@ const useHomeAssistant = () => {
 
           // Temp fetching
           const currentTemp = getNum(map.temp) || room.temp;
-          const currentHum = getNum(map.humidity) || room.humidity;
+          const rawHum = getNum(map.humidity);
+          const currentHum = rawHum !== null ? Math.round(rawHum) : room.humidity;
 
           // --- SESSION MANAGEMENT LOGIC ---
           const sessionKey = `${room.id}`;
@@ -597,7 +598,7 @@ const useHomeAssistant = () => {
       return {
         ...room,
         temp: Number((room.temp + tempChange).toFixed(1)),
-        humidity: Math.max(30, Math.min(99, room.humidity + humChange)),
+        humidity: Math.round(Math.max(30, Math.min(99, room.humidity + humChange))),
         co2: room.co2 ? Math.max(400, room.co2 + co2Change) : null
       };
     }));
@@ -1053,7 +1054,7 @@ const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, activeS
            </div>
         </div>
         <div className={`px-3 py-1 rounded-full text-xs font-medium shrink-0 ${scoreBadgeClass}`}>
-          {analysis.score}
+          {Math.round(analysis.score)}
         </div>
       </div>
 
@@ -1065,7 +1066,7 @@ const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, activeS
         <div className="bg-black/20 p-3 rounded-[16px]">
            <div className="text-xs opacity-60 mb-1">Feuchte</div>
            <div className={`text-xl font-normal ${analysis.issues.some(i => i.type === 'hum') ? 'text-red-300' : ''}`}>
-             {room.humidity || '-'}%
+             {room.humidity ? Math.round(room.humidity) : '-'}%
            </div>
         </div>
       </div>
@@ -1230,7 +1231,7 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, activeSess
         <div className="p-6 pt-4 overflow-y-auto custom-scrollbar">
           
           <div className={`mb-6 p-5 rounded-[24px] flex items-center gap-5 ${analysis.score >= 80 ? 'bg-emerald-900/20 text-emerald-200 border border-emerald-900/30' : analysis.score >= 60 ? 'bg-yellow-900/20 text-yellow-200 border border-yellow-900/30' : 'bg-red-900/20 text-red-200 border border-red-900/30'}`}>
-             <div className="text-5xl font-normal">{analysis.score}</div>
+             <div className="text-5xl font-normal">{Math.round(analysis.score)}</div>
              <div className="text-sm opacity-90 border-l border-current pl-5 leading-tight font-medium">Klima-<br/>Score</div>
           </div>
 
@@ -1257,7 +1258,7 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, activeSess
                   <div className="flex items-center gap-2 text-slate-400 text-xs font-medium"><Droplets size={16}/> Feuchte</div>
                   {activeChart === 'humidity' ? <ChevronUp size={16} className="text-blue-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
                 </div>
-                <div className="text-3xl font-normal text-white">{room.humidity}%</div>
+                <div className="text-3xl font-normal text-white">{Math.round(room.humidity)}%</div>
                 <div className="text-xs text-slate-500 mt-2">Ziel: {limits.humMin}-{limits.humMax}%</div>
              </div>
           </div>
