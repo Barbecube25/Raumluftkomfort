@@ -684,8 +684,8 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 rounded-[28px] border border-slate-700 shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh] overflow-hidden">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 m3-animate-fade-in">
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh] overflow-hidden m3-animate-scale-in">
         {/* M3 Headline */}
         <div className="p-6 pb-4 flex justify-between items-center bg-slate-900 z-10">
           <h2 className="text-2xl font-normal text-slate-100 flex items-center gap-2">
@@ -712,18 +712,18 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
                 <div className="space-y-1">
                   <label className="text-xs text-slate-400 ml-3 flex items-center gap-1">Temperatur (°C)</label>
                   <div className="flex items-center gap-2 bg-slate-800 rounded-t-xl rounded-b-sm border-b border-slate-600 px-3 py-2">
-                    <input type="number" value={config.tempMin} onChange={(e) => handleChange(key, 'tempMin', e.target.value)} className="w-full bg-transparent text-white text-center focus:outline-none"/>
+                    <input type="number" value={config.tempMin} onChange={(e) => handleChange(key, 'tempMin', e.target.value)} className="w-full bg-transparent text-slate-100 text-center focus:outline-none"/>
                     <span className="text-slate-500">-</span>
-                    <input type="number" value={config.tempMax} onChange={(e) => handleChange(key, 'tempMax', e.target.value)} className="w-full bg-transparent text-white text-center focus:outline-none"/>
+                    <input type="number" value={config.tempMax} onChange={(e) => handleChange(key, 'tempMax', e.target.value)} className="w-full bg-transparent text-slate-100 text-center focus:outline-none"/>
                   </div>
                 </div>
                 
                 <div className="space-y-1">
                   <label className="text-xs text-slate-400 ml-3 flex items-center gap-1">Feuchtigkeit (%)</label>
                   <div className="flex items-center gap-2 bg-slate-800 rounded-t-xl rounded-b-sm border-b border-slate-600 px-3 py-2">
-                    <input type="number" value={config.humMin} onChange={(e) => handleChange(key, 'humMin', e.target.value)} className="w-full bg-transparent text-white text-center focus:outline-none"/>
+                    <input type="number" value={config.humMin} onChange={(e) => handleChange(key, 'humMin', e.target.value)} className="w-full bg-transparent text-slate-100 text-center focus:outline-none"/>
                     <span className="text-slate-500">-</span>
-                    <input type="number" value={config.humMax} onChange={(e) => handleChange(key, 'humMax', e.target.value)} className="w-full bg-transparent text-white text-center focus:outline-none"/>
+                    <input type="number" value={config.humMax} onChange={(e) => handleChange(key, 'humMax', e.target.value)} className="w-full bg-transparent text-slate-100 text-center focus:outline-none"/>
                   </div>
                 </div>
               </div>
@@ -733,7 +733,7 @@ const SettingsModal = ({ settings, onSave, onClose }) => {
 
         {/* M3 Actions Area */}
         <div className="p-6 pt-4 flex justify-end gap-2 bg-slate-900">
-          <button onClick={handleReset} className="px-6 h-10 rounded-full text-slate-300 font-medium hover:bg-slate-800 hover:text-white transition-colors">
+          <button onClick={handleReset} className="px-6 h-10 rounded-full text-slate-300 font-medium hover:bg-slate-800 hover:text-slate-100 transition-colors">
             Reset
           </button>
           <button onClick={() => onSave(localSettings)} className="px-6 h-10 rounded-full bg-blue-600 text-white font-medium hover:bg-blue-500 shadow-md transition-all active:scale-95">
@@ -758,8 +758,8 @@ const HeatingControlModal = ({ rooms, setTemperature, setHvacMode, onClose }) =>
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 rounded-[28px] border border-slate-700 shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh] overflow-hidden">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 m3-animate-fade-in">
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh] overflow-hidden m3-animate-scale-in">
         <div className="p-6 pb-2 flex justify-between items-center">
           <h2 className="text-2xl font-normal text-slate-100">Heizung</h2>
           <button onClick={onClose} className="p-3 rounded-full hover:bg-slate-800 text-slate-400 transition-colors"><X size={24}/></button>
@@ -778,7 +778,7 @@ const HeatingControlModal = ({ rooms, setTemperature, setHvacMode, onClose }) =>
           {heatedRooms.length === 0 ? <div className="text-center text-slate-500 py-8">Keine steuerbaren Heizungen gefunden.</div> : heatedRooms.map(room => {
               const isOff = room.hvacMode === 'off';
               return (
-              <div key={room.id} className="bg-slate-800 p-4 rounded-[20px] flex justify-between items-center">
+              <div key={room.id} className="bg-slate-800/80 p-4 rounded-[20px] flex justify-between items-center">
                 <div>
                   <div className="font-medium text-lg text-slate-100">{room.name}</div>
                   <div className="text-sm text-slate-400 mt-0.5">Ist: {room.temp}°C</div>
@@ -844,7 +844,7 @@ const SummaryWidgetView = ({ rooms, outside, settings, extensions, refresh }) =>
              <Activity size={24} className={iconColor}/>
              <span className="text-2xl font-normal">{statusText} ({avgScore})</span>
           </div>
-          <button onClick={(e) => { e.stopPropagation(); refresh(); }} className="p-2 rounded-full bg-black/10 text-inherit hover:bg-black/20"><RefreshCw size={16}/></button>
+          <button onClick={(e) => { e.stopPropagation(); refresh(); }} className="p-2 rounded-full bg-white/10 text-inherit hover:bg-white/15 transition-colors"><RefreshCw size={16}/></button>
        </div>
        
        <div className="w-full space-y-2 overflow-hidden flex-1">
@@ -853,13 +853,13 @@ const SummaryWidgetView = ({ rooms, outside, settings, extensions, refresh }) =>
                 Alles im grünen Bereich.
              </div>
           ) : (
-             roomsWithActions.slice(0, 2).map((room, i) => (
-                <div key={i} className="bg-black/10 p-3 rounded-[16px] text-xs">
-                   <div className="font-medium mb-0.5 text-base">{room.name}</div>
-                   <div className="opacity-90 truncate">{room.recommendations[0]}</div>
-                </div>
-             ))
-          )}
+              roomsWithActions.slice(0, 2).map((room, i) => (
+                 <div key={i} className="bg-white/10 p-3 rounded-[16px] text-xs">
+                    <div className="font-medium mb-0.5 text-base">{room.name}</div>
+                    <div className="opacity-90 truncate">{room.recommendations[0]}</div>
+                 </div>
+              ))
+            )}
           {roomsWithActions.length > 2 && (
              <div className="text-center text-[10px] opacity-60">
                 + {roomsWithActions.length - 2} weitere...
@@ -875,21 +875,25 @@ const WidgetView = ({ outside, rooms, refresh }) => {
   const avgTemp = (rooms.reduce((acc, r) => acc + r.temp, 0) / rooms.length).toFixed(1);
   const openWindows = rooms.filter(r => r.windowOpen).length;
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-4 flex flex-col justify-center items-center">
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 flex flex-col justify-center items-center">
         <div className="w-full max-w-xs space-y-4">
             <div className="flex justify-between items-center pb-2 border-b border-slate-800">
                 <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">Klima Status</span>
-                <button onClick={refresh} className="p-2 rounded-full hover:bg-slate-800"><RefreshCw size={16}/></button>
+                <button onClick={refresh} className="p-2 rounded-full hover:bg-slate-800 transition-colors"><RefreshCw size={16}/></button>
             </div>
             <div className="grid grid-cols-2 gap-4">
-               <div className="bg-slate-900 p-4 rounded-[24px] flex flex-col items-center border border-slate-800">
-                  <CloudRain size={24} className="text-blue-400 mb-2"/><span className="text-3xl font-normal">{outside.temp}°</span><span className="text-xs text-slate-500 mt-1">Außen</span>
+               <div className="bg-slate-900 p-4 rounded-[24px] flex flex-col items-center border border-slate-800 shadow-md">
+                  <CloudRain size={24} className="text-blue-300 mb-2"/>
+                  <span className="text-3xl font-normal">{outside.temp}°</span>
+                  <span className="text-xs text-slate-500 mt-1">Außen</span>
                </div>
-               <div className="bg-slate-900 p-4 rounded-[24px] flex flex-col items-center border border-slate-800">
-                  <Home size={24} className="text-indigo-400 mb-2"/><span className="text-3xl font-normal">{avgTemp}°</span><span className="text-xs text-slate-500 mt-1">Ø Innen</span>
+               <div className="bg-slate-900 p-4 rounded-[24px] flex flex-col items-center border border-slate-800 shadow-md">
+                  <Home size={24} className="text-indigo-200 mb-2"/>
+                  <span className="text-3xl font-normal">{avgTemp}°</span>
+                  <span className="text-xs text-slate-500 mt-1">Ø Innen</span>
                </div>
             </div>
-            <div className={`p-4 rounded-[20px] flex items-center justify-center gap-2 text-sm font-medium border transition-colors cursor-pointer hover:opacity-90 ${openWindows > 0 ? 'bg-red-900/30 text-red-200 border-red-900/40' : 'bg-emerald-900/30 text-emerald-200 border-emerald-900/40'}`} onClick={() => window.open('/', '_self')}>
+            <div className={`p-4 rounded-[20px] flex items-center justify-center gap-2 text-sm font-medium border transition-colors cursor-pointer hover:opacity-90 ${openWindows > 0 ? 'bg-red-900/30 text-red-200 border-red-900/40' : 'bg-emerald-900/30 text-emerald-200 border-emerald-900/40'} m3-animate-fade-up`} onClick={() => window.open('/', '_self')}>
                 {openWindows > 0 ? <Wind size={20}/> : <CheckCircle size={20}/>}{openWindows > 0 ? `${openWindows} Fenster offen!` : 'Alle Fenster zu'}
             </div>
         </div>
@@ -901,11 +905,11 @@ const WidgetView = ({ outside, rooms, refresh }) => {
 const WindowListModal = ({ rooms, onClose }) => {
   const openWindows = rooms.filter(r => r.windowOpen);
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 rounded-[28px] border border-slate-700 shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200 p-6">
-        <div className="flex justify-between items-center mb-6"><h3 className="text-2xl font-normal text-slate-100">Fensterstatus</h3><button onClick={onClose} className="p-3 rounded-full hover:bg-slate-800 text-slate-400"><X size={24}/></button></div>
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 m3-animate-fade-in">
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-sm overflow-hidden m3-animate-scale-in p-6">
+        <div className="flex justify-between items-center mb-6"><h3 className="text-2xl font-normal text-slate-100">Fensterstatus</h3><button onClick={onClose} className="p-3 rounded-full hover:bg-slate-800 text-slate-400 transition-colors"><X size={24}/></button></div>
         <div className="space-y-3">
-          {openWindows.length > 0 ? (openWindows.map(room => (<div key={room.id} className="flex items-center gap-4 p-4 bg-slate-800 text-blue-100 rounded-[20px]"><div className="bg-blue-900/50 p-3 rounded-full text-blue-300"><Wind size={20}/></div><div><span className="font-medium text-lg block text-slate-100">{room.name}</span><span className="text-sm opacity-80">Fenster geöffnet</span></div></div>))) : (<div className="flex flex-col items-center py-8 text-emerald-200 bg-emerald-900/20 rounded-[24px] border border-emerald-900/30"><CheckCircle size={48} className="mb-4 opacity-80"/><span className="font-medium text-xl">Alles zu</span><span className="text-sm opacity-70 mt-1">Kein Fenster ist aktuell geöffnet</span></div>)}
+          {openWindows.length > 0 ? (openWindows.map(room => (<div key={room.id} className="flex items-center gap-4 p-4 bg-slate-800/80 text-blue-100 rounded-[20px]"><div className="bg-blue-900/50 p-3 rounded-full text-blue-300"><Wind size={20}/></div><div><span className="font-medium text-lg block text-slate-100">{room.name}</span><span className="text-sm opacity-80">Fenster geöffnet</span></div></div>))) : (<div className="flex flex-col items-center py-8 text-emerald-200 bg-emerald-900/20 rounded-[24px] border border-emerald-900/30"><CheckCircle size={48} className="mb-4 opacity-80"/><span className="font-medium text-xl">Alles zu</span><span className="text-sm opacity-70 mt-1">Kein Fenster ist aktuell geöffnet</span></div>)}
         </div>
         <div className="mt-8 flex justify-end"><button onClick={onClose} className="px-6 h-10 rounded-full bg-slate-800 text-slate-200 font-medium hover:bg-slate-700 transition-colors">Schließen</button></div>
       </div>
@@ -927,13 +931,13 @@ const SummaryModal = ({ rooms, outside, settings, extensions, onClose }) => {
   }, [rooms, outside, settings, extensions]);
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 rounded-[28px] border border-slate-700 shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 m3-animate-fade-in">
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] m3-animate-scale-in">
         <div className="p-6 pb-4 border-b border-slate-800 flex justify-between items-center">
           <h2 className="text-2xl font-normal text-slate-100 flex items-center gap-2">
             Analyse
           </h2>
-          <button onClick={onClose} className="p-3 rounded-full hover:bg-slate-800 text-slate-400">
+          <button onClick={onClose} className="p-3 rounded-full hover:bg-slate-800 text-slate-400 transition-colors">
             <X size={24}/>
           </button>
         </div>
@@ -946,7 +950,7 @@ const SummaryModal = ({ rooms, outside, settings, extensions, onClose }) => {
             </div>
           ) : (
             roomsWithActions.map(room => (
-              <div key={room.id} className="bg-slate-800 p-5 rounded-[20px]">
+              <div key={room.id} className="bg-slate-800/80 p-5 rounded-[20px]">
                 <div className="font-medium text-lg text-slate-100 mb-3 flex justify-between items-center">
                   {room.name}
                   {room.windowOpen && <span className="text-xs bg-blue-900/40 text-blue-200 px-3 py-1 rounded-full border border-blue-900/50 font-medium">Offen</span>}
@@ -1059,11 +1063,11 @@ const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, activeS
       </div>
 
       <div className="grid grid-cols-2 gap-3 mb-3">
-        <div className="bg-black/20 p-3 rounded-[16px]">
+        <div className="bg-slate-900/60 p-3 rounded-[16px]">
            <div className="text-xs opacity-60 mb-1">Temp</div>
            <div className="text-xl font-normal">{room.temp ? room.temp.toFixed(1) : '-'}°</div>
         </div>
-        <div className="bg-black/20 p-3 rounded-[16px]">
+        <div className="bg-slate-900/60 p-3 rounded-[16px]">
            <div className="text-xs opacity-60 mb-1">Feuchte</div>
            <div className={`text-xl font-normal ${analysis.issues.some(i => i.type === 'hum') ? 'text-red-300' : ''}`}>
              {room.humidity ? Math.round(room.humidity) : '-'}%
@@ -1072,7 +1076,7 @@ const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, activeS
       </div>
 
       {analysis.recommendations.length > 0 && (
-         <div className={`mt-1 flex items-center gap-3 text-xs p-3 rounded-[16px] ${countdownMsg ? 'bg-blue-400/10 text-blue-200' : 'bg-black/20 opacity-80'}`}>
+         <div className={`mt-1 flex items-center gap-3 text-xs p-3 rounded-[16px] ${countdownMsg ? 'bg-blue-400/10 text-blue-200' : 'bg-slate-900/60 opacity-90'}`}>
             {analysis.isCrossVentilating && <ArrowRightLeft size={16} className="shrink-0 text-blue-300"/>}
             {countdownMsg && !analysis.isCrossVentilating && analysis.isAdaptive && <BrainCircuit size={16} className="shrink-0 text-pink-300"/>}
             {countdownMsg && !analysis.isCrossVentilating && !analysis.isAdaptive && <Timer size={16} className="shrink-0"/>}
@@ -1217,13 +1221,13 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, activeSess
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="bg-slate-900 rounded-[28px] border border-slate-700 shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 m3-animate-fade-in">
+      <div className="bg-slate-900 rounded-[28px] border border-slate-800 shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] m3-animate-scale-in">
         {/* M3 Modal Header */}
         <div className="p-6 pb-2 flex justify-between items-start">
            <div>
-             <h2 className="text-2xl font-normal text-slate-100">{room.name}</h2>
-             <p className="text-slate-400 text-sm mt-1">Details & Analyse {analysis.isNight && '(Nachtmodus)'}</p>
+              <h2 className="text-2xl font-normal text-slate-100">{room.name}</h2>
+              <p className="text-slate-400 text-sm mt-1">Details & Analyse {analysis.isNight && '(Nachtmodus)'}</p>
            </div>
            <button onClick={onClose} className="p-3 rounded-full hover:bg-slate-800 text-slate-400 transition-colors"><X size={24}/></button>
         </div>
@@ -1235,42 +1239,42 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, activeSess
              <div className="text-sm opacity-90 border-l border-current pl-5 leading-tight font-medium">Klima-<br/>Score</div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 mb-6">
-             {/* Temperatur Box - Klickbar */}
-             <div 
-               onClick={() => toggleChart('temp')}
-               className={`bg-slate-800 p-5 rounded-[24px] transition-all cursor-pointer border ${activeChart === 'temp' ? 'border-orange-500 bg-slate-800 ring-1 ring-orange-500/20' : 'border-slate-800 hover:bg-slate-700'}`}
-             >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2 text-slate-400 text-xs font-medium"><Thermometer size={16}/> Temperatur</div>
-                  {activeChart === 'temp' ? <ChevronUp size={16} className="text-orange-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
-                </div>
-                <div className="text-3xl font-normal text-white">{room.temp}°C</div>
-                <div className="text-xs text-slate-500 mt-2">Ziel: {limits.tempMin}-{limits.tempMax}°</div>
-             </div>
+           <div className="grid grid-cols-2 gap-4 mb-6">
+              {/* Temperatur Box - Klickbar */}
+              <div 
+                onClick={() => toggleChart('temp')}
+                className={`bg-slate-800/80 p-5 rounded-[24px] transition-all cursor-pointer border ${activeChart === 'temp' ? 'border-orange-500 bg-slate-800 ring-1 ring-orange-500/20' : 'border-slate-800 hover:bg-slate-700'}`}
+              >
+                 <div className="flex items-center justify-between mb-2">
+                   <div className="flex items-center gap-2 text-slate-400 text-xs font-medium"><Thermometer size={16}/> Temperatur</div>
+                   {activeChart === 'temp' ? <ChevronUp size={16} className="text-orange-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
+                 </div>
+                 <div className="text-3xl font-normal text-slate-100">{room.temp}°C</div>
+                 <div className="text-xs text-slate-500 mt-2">Ziel: {limits.tempMin}-{limits.tempMax}°</div>
+              </div>
              
              {/* Feuchtigkeit Box - Klickbar */}
-             <div 
-               onClick={() => toggleChart('humidity')}
-               className={`bg-slate-800 p-5 rounded-[24px] transition-all cursor-pointer border ${activeChart === 'humidity' ? 'border-blue-500 bg-slate-800 ring-1 ring-blue-500/20' : 'border-slate-800 hover:bg-slate-700'}`}
-             >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2 text-slate-400 text-xs font-medium"><Droplets size={16}/> Feuchte</div>
-                  {activeChart === 'humidity' ? <ChevronUp size={16} className="text-blue-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
-                </div>
-                <div className="text-3xl font-normal text-white">{Math.round(room.humidity)}%</div>
-                <div className="text-xs text-slate-500 mt-2">Ziel: {limits.humMin}-{limits.humMax}%</div>
-             </div>
-          </div>
+              <div 
+                onClick={() => toggleChart('humidity')}
+                className={`bg-slate-800/80 p-5 rounded-[24px] transition-all cursor-pointer border ${activeChart === 'humidity' ? 'border-blue-500 bg-slate-800 ring-1 ring-blue-500/20' : 'border-slate-800 hover:bg-slate-700'}`}
+              >
+                 <div className="flex items-center justify-between mb-2">
+                   <div className="flex items-center gap-2 text-slate-400 text-xs font-medium"><Droplets size={16}/> Feuchte</div>
+                   {activeChart === 'humidity' ? <ChevronUp size={16} className="text-blue-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
+                 </div>
+                 <div className="text-3xl font-normal text-slate-100">{Math.round(room.humidity)}%</div>
+                 <div className="text-xs text-slate-500 mt-2">Ziel: {limits.humMin}-{limits.humMax}%</div>
+              </div>
+           </div>
 
           {/* DIAGRAMM ANZEIGE für Temp/Feuchte */}
-          {(activeChart === 'temp' || activeChart === 'humidity') && (
-            <div className="mb-6 animate-in slide-in-from-top-4 fade-in duration-300">
-               <div className="bg-slate-900 p-5 rounded-[24px] border border-slate-800">
-                  <div className="text-xs font-bold text-slate-500 mb-4 uppercase tracking-wider flex justify-between">
-                     Verlauf (24h)
-                     {isLoadingHistory && <RefreshCw size={12} className="animate-spin"/>}
-                  </div>
+           {(activeChart === 'temp' || activeChart === 'humidity') && (
+            <div className="mb-6 m3-animate-fade-up">
+               <div className="bg-slate-900/80 p-5 rounded-[24px] border border-slate-800">
+                   <div className="text-xs font-bold text-slate-500 mb-4 uppercase tracking-wider flex justify-between">
+                      Verlauf (24h)
+                      {isLoadingHistory && <RefreshCw size={12} className="animate-spin"/>}
+                   </div>
                   {isLoadingHistory ? (
                      <div className="h-40 flex items-center justify-center text-slate-600 text-xs">Lade Daten...</div>
                   ) : (
@@ -1288,14 +1292,14 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, activeSess
           {room.hasCo2 && (
             <div 
               onClick={() => toggleChart('co2')}
-              className={`mb-6 bg-slate-800 p-5 rounded-[24px] transition-all cursor-pointer flex justify-between items-center border ${activeChart === 'co2' ? 'border-purple-500 bg-slate-800 ring-1 ring-purple-500/20' : 'border-slate-800 hover:bg-slate-700'}`}
+              className={`mb-6 bg-slate-800/80 p-5 rounded-[24px] transition-all cursor-pointer flex justify-between items-center border ${activeChart === 'co2' ? 'border-purple-500 bg-slate-800 ring-1 ring-purple-500/20' : 'border-slate-800 hover:bg-slate-700'}`}
             >
               <div>
                 <div className="flex items-center gap-2 text-slate-400 text-xs font-medium mb-1">
                    <Wind size={16}/> CO2 Belastung
                    {activeChart === 'co2' ? <ChevronUp size={16} className="text-purple-500"/> : <ChevronDown size={16} className="text-slate-500"/>}
                 </div>
-                <div className="text-2xl font-normal text-white">{room.co2} ppm</div>
+                <div className="text-2xl font-normal text-slate-100">{room.co2} ppm</div>
               </div>
               <div className={`px-4 py-2 rounded-full text-xs font-bold ${room.co2 < 1000 ? 'bg-emerald-900/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
                 {room.co2 < 1000 ? 'Gut' : 'Schlecht'}
@@ -1304,13 +1308,13 @@ const M3Modal = ({ room, outsideData, settings, allRooms, extensions, activeSess
           )}
 
           {/* DIAGRAMM ANZEIGE für CO2 */}
-          {activeChart === 'co2' && (
-            <div className="mb-6 animate-in slide-in-from-top-4 fade-in duration-300">
-               <div className="bg-slate-900 p-5 rounded-[24px] border border-slate-800">
-                  <div className="text-xs font-bold text-slate-500 mb-4 uppercase tracking-wider flex justify-between">
-                     CO2 Verlauf (24h)
-                     {isLoadingHistory && <RefreshCw size={12} className="animate-spin"/>}
-                  </div>
+           {activeChart === 'co2' && (
+            <div className="mb-6 m3-animate-fade-up">
+               <div className="bg-slate-900/80 p-5 rounded-[24px] border border-slate-800">
+                   <div className="text-xs font-bold text-slate-500 mb-4 uppercase tracking-wider flex justify-between">
+                      CO2 Verlauf (24h)
+                      {isLoadingHistory && <RefreshCw size={12} className="animate-spin"/>}
+                   </div>
                   {isLoadingHistory ? (
                      <div className="h-40 flex items-center justify-center text-slate-600 text-xs">Lade Daten...</div>
                   ) : (
@@ -1666,10 +1670,10 @@ export default function App() {
       <div className="max-w-7xl mx-auto pb-8">
         
         {/* HEADER */}
-        <header className="mb-6 flex flex-col gap-5">
+        <header className="mb-6 flex flex-col gap-5 m3-animate-fade-up">
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-4xl font-normal text-white tracking-tight">Raumklima</h1>
+              <h1 className="text-4xl font-normal text-slate-100 tracking-tight">Raumklima</h1>
               <div className="flex items-center gap-3 mt-2 text-sm text-slate-400 font-medium">
                  {isDemoMode ? (
                    <span className="flex items-center gap-1.5 bg-slate-900 px-3 py-1 rounded-full text-slate-300"><WifiOff size={14}/> Demo</span>
@@ -1684,28 +1688,28 @@ export default function App() {
               </div>
             </div>
             
-            <div className="flex gap-2">
-              {'Notification' in window && (
-                <button 
-                  onClick={notifyPerm === 'granted' ? testNotification : requestNotifications} 
-                  className={`p-4 rounded-full transition-colors active:scale-95 ${notifyPerm === 'granted' ? 'bg-emerald-900/30 text-emerald-200' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-                >
-                  {notifyPerm === 'granted' ? <BellRing size={24} /> : <BellOff size={24} />}
-                </button>
-              )}
-              
-              <button 
-                onClick={() => setShowSettings(true)}
-                className="bg-slate-800 text-slate-300 p-4 rounded-full hover:bg-slate-700 active:scale-95 transition-all"
-              >
-                <Settings size={24} />
-              </button>
+             <div className="flex gap-2">
+               {'Notification' in window && (
+                 <button 
+                   onClick={notifyPerm === 'granted' ? testNotification : requestNotifications} 
+                   className={`p-4 rounded-full transition-all active:scale-95 ${notifyPerm === 'granted' ? 'bg-emerald-900/30 text-emerald-200' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                 >
+                   {notifyPerm === 'granted' ? <BellRing size={24} /> : <BellOff size={24} />}
+                 </button>
+               )}
+               
+               <button 
+                 onClick={() => setShowSettings(true)}
+                 className="bg-slate-800 text-slate-300 p-4 rounded-full hover:bg-slate-700 active:scale-95 transition-all"
+               >
+                 <Settings size={24} />
+               </button>
 
-              {installPrompt && (
-                <button onClick={handleInstallClick} className="bg-blue-600 text-white p-4 rounded-full shadow-lg active:scale-95 transition-all">
+               {installPrompt && (
+                <button onClick={handleInstallClick} className="bg-blue-600 text-white p-4 rounded-full shadow-lg active:scale-95 transition-all hover:bg-blue-500">
                   <Download size={24} />
                 </button>
-              )}
+               )}
               <button onClick={hookData.refresh} className="bg-slate-800 text-slate-300 p-4 rounded-full hover:bg-slate-700 active:scale-95 transition-all">
                 <RefreshCw size={24} className={connectionStatus === 'loading' ? 'animate-spin' : ''}/>
               </button>
@@ -1724,7 +1728,7 @@ export default function App() {
         </header>
 
         {/* TOP STATS */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6 m3-animate-fade-up">
           <M3StatCard 
             icon={CloudRain} 
             label="Außen" 
@@ -1763,7 +1767,7 @@ export default function App() {
         </div>
 
         {/* ROOM GRID */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 m3-animate-fade-up">
           {rooms.map(room => (
             <RoomCardM3 
               key={room.id} 
