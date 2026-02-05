@@ -90,6 +90,7 @@ const AC_CONNECTED_ROOMS = ['bath', 'living', 'dining', 'kitchen'];
 
 // --- LEARNING SYSTEM KONFIGURATION ---
 const TARGET_CO2_PPM = 800; // Ziel-CO2-Wert in ppm
+const CO2_ALERT_THRESHOLD_PPM = 1000; // CO2-Schwellenwert für Warnung
 const HUMIDITY_TARGET_OFFSET = 5; // Offset unter humMax für Feuchtigkeits-Ziel
 const LIVE_ANALYSIS_MIN_DURATION = 3; // Minuten bevor Live-Analyse startet
 const FULL_TRUST_DURATION_MIN = 15; // Minuten für volles Vertrauen in Live-Messung
@@ -294,7 +295,7 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
   let humTargetMin = null;
   
   // CO2-basierte Vorhersage
-  if (room.hasCo2 && room.co2 > 1000 && roomHistory && roomHistory.avgCo2Rate > 0) {
+  if (room.hasCo2 && room.co2 > CO2_ALERT_THRESHOLD_PPM && roomHistory && roomHistory.avgCo2Rate > 0) {
       const co2ToReduce = Math.max(0, room.co2 - TARGET_CO2_PPM);
       co2TargetMin = Math.ceil(co2ToReduce / roomHistory.avgCo2Rate);
       
@@ -339,13 +340,6 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
           }
       }
   }
-  
-  // Bestimme die längste benötigte Zeit
-  const maxTargetMin = Math.max(
-      totalTargetMin,
-      co2TargetMin || 0,
-      humTargetMin || 0
-  );
 
   // Temp Check
   if (room.temp < limits.tempMin) {
@@ -461,7 +455,6 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
     totalTargetMin,
     co2TargetMin,
     humTargetMin,
-    maxTargetMin,
     isNight,
     isAdaptive,
     learnedFactor
@@ -535,13 +528,13 @@ const useHomeAssistant = () => {
           ) : currentStats.avgTempRate;
           
           const newAvgCo2 = co2Rate !== null && co2Rate > 0 ? (
-              currentStats.samples === 0 || !currentStats.avgCo2Rate
+              currentStats.samples === 0 || currentStats.avgCo2Rate == null
                   ? co2Rate 
                   : (currentStats.avgCo2Rate * HISTORICAL_WEIGHT) + (co2Rate * NEW_DATA_WEIGHT)
           ) : (currentStats.avgCo2Rate || 0);
           
           const newAvgHum = humRate > 0 ? (
-              currentStats.samples === 0 || !currentStats.avgHumRate
+              currentStats.samples === 0 || currentStats.avgHumRate == null
                   ? humRate 
                   : (currentStats.avgHumRate * HISTORICAL_WEIGHT) + (humRate * NEW_DATA_WEIGHT)
           ) : (currentStats.avgHumRate || 0);
