@@ -1687,7 +1687,7 @@ export default function App() {
                       setTimerExtensions(prev => ({...prev, [sessionBase]: newExtension}));
                       setNotifiedSessions(prev => new Set(prev).add(extKey));
                       wasExtended = true;
-                      // Don't return - let the notification logic below handle it
+                      // Don't return - continue flow but skip notification below
                   }
               }
           }
