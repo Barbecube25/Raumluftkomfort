@@ -1048,8 +1048,8 @@ const RoomCardM3 = ({ room, outsideData, settings, allRooms, extensions, activeS
            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${iconBgClass}`}>
              <Home size={20} />
            </div>
-           <div className="min-w-0">
-              <h3 className="font-medium text-lg leading-tight truncate">{room.name}</h3>
+           <div className="min-w-0 flex-1">
+              <h3 className="font-semibold text-base leading-tight truncate">{room.name}</h3>
               {room.windowOpen && (
                  <p className="text-xs font-medium opacity-80 flex items-center gap-1 mt-0.5">
                    Offen {formatTimeAgo(room.lastWindowOpen)}
@@ -1764,6 +1764,13 @@ export default function App() {
              </div>
              <div className="text-xs font-medium opacity-70 uppercase tracking-wider">Gesamtstatus</div>
           </div>
+        </div>
+
+        {/* SEPARATOR */}
+        <div className="flex items-center gap-4 my-6">
+          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent"></div>
+          <h2 className="text-sm font-medium text-slate-400 uppercase tracking-wider">Zimmer</h2>
+          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-700 to-transparent"></div>
         </div>
 
         {/* ROOM GRID */}
