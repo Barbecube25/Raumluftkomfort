@@ -1673,6 +1673,7 @@ export default function App() {
           const remaining = Math.ceil(totalTargetMin - openMin);
           
           // AUTO-EXTENSION
+          let wasExtended = false;
           if (remaining <= 0) {
               const sessionBase = `${room.id}-${room.lastWindowOpen}`;
               const hasIssues = analysis.issues.some(i => (i.type === 'hum' && i.status === 'high') || i.type === 'co2');
@@ -1685,7 +1686,8 @@ export default function App() {
                   if (!notifiedSessions.has(extKey)) {
                       setTimerExtensions(prev => ({...prev, [sessionBase]: newExtension}));
                       setNotifiedSessions(prev => new Set(prev).add(extKey));
-                      return; 
+                      wasExtended = true;
+                      // Don't return - continue flow but skip notification below
                   }
               }
           }
@@ -1728,19 +1730,23 @@ export default function App() {
               if (isCold) {
                   vibrate = [500, 200, 500];
                   renotify = true; 
-              } else if (remaining <= 0) {
+              } else if (remaining <= 0 && !wasExtended) {
+                  // Only send notification with vibration/sound if timer truly expired (not extended)
                   vibrate = [200, 100, 200];
                   renotify = true; 
               }
 
-              sendNotification(title, {
-                  body: body,
-                  tag: `${room.id}-${room.lastWindowOpen}`, 
-                  vibrate: vibrate,
-                  renotify: renotify
-              });
+              // Send notification only if not just extended
+              if (!wasExtended) {
+                  sendNotification(title, {
+                      body: body,
+                      tag: `${room.id}-${room.lastWindowOpen}`, 
+                      vibrate: vibrate,
+                      renotify: renotify
+                  });
 
-              lastNotificationMap.current[room.id] = body;
+                  lastNotificationMap.current[room.id] = body;
+              }
           }
       }
     });
