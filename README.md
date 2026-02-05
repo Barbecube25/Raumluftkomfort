@@ -58,6 +58,15 @@ Alle Lerndaten werden lokal im Browser gespeichert (localStorage):
 - Fenstersession muss mindestens **5 Minuten** dauern
 - Positive Änderung muss messbar sein (Abkühlung/CO2-Reduktion/Entfeuchtung)
 
+### 🔔 Intelligente Timer-Benachrichtigungen
+
+Die App bietet ein intelligentes Timer-System für Lüftungssessions:
+
+- **Timer-Ablauf**: Wenn der Timer abläuft, wird eine Benachrichtigung mit Vibration gesendet
+- **Automatische Verlängerung**: Bei hohen CO2- oder Feuchtigkeitswerten wird der Timer automatisch um 5 Minuten verlängert (max. 30 Min. Gesamtverlängerung)
+- **Keine Benachrichtigung bei Verlängerung**: Wenn der Timer verlängert wird, erfolgt **keine** Benachrichtigung - nur bei tatsächlichem Ablauf ohne weitere Verlängerung wird geklingelt
+- **Kältewarnung**: Bei zu niedrigen Temperaturen erfolgt sofort eine Warnung mit starker Vibration
+
 ## Installation & Entwicklung
 
 ```bash
