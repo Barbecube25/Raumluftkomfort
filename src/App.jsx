@@ -280,6 +280,65 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
   
   const ventDurationText = `${totalTargetMin} Min`;
 
+  // --- LEARNED CO2 & HUMIDITY PREDICTIONS ---
+  let co2TargetMin = null;
+  let humTargetMin = null;
+  
+  // CO2-basierte Vorhersage
+  if (room.hasCo2 && room.co2 > 1000 && roomHistory && roomHistory.avgCo2Rate > 0) {
+      const targetCo2 = 800; // Ziel-CO2-Wert
+      const co2ToReduce = Math.max(0, room.co2 - targetCo2);
+      co2TargetMin = Math.ceil(co2ToReduce / roomHistory.avgCo2Rate);
+      
+      // Live-Anpassung wenn Fenster offen
+      if (room.windowOpen && activeSession && activeSession.startCo2) {
+          const diffMin = (Date.now() - activeSession.startTime) / 60000;
+          if (diffMin > 3) {
+              const deltaCo2 = activeSession.startCo2 - room.co2;
+              const currentCo2Rate = deltaCo2 / diffMin;
+              
+              if (currentCo2Rate > 0) {
+                  const remainingCo2Drop = Math.max(0, room.co2 - targetCo2);
+                  const predictedRemaining = remainingCo2Drop / currentCo2Rate;
+                  const trustFactor = Math.min(1.0, diffMin / 15);
+                  const totalPredicted = diffMin + predictedRemaining;
+                  co2TargetMin = Math.ceil((co2TargetMin * (1 - trustFactor)) + (totalPredicted * trustFactor));
+              }
+          }
+      }
+  }
+  
+  // Feuchtigkeits-basierte Vorhersage
+  if (room.humidity > limits.humMax && roomHistory && roomHistory.avgHumRate > 0) {
+      const targetHum = limits.humMax - 5; // Ziel: etwas unter Maximum
+      const humToReduce = Math.max(0, room.humidity - targetHum);
+      humTargetMin = Math.ceil(humToReduce / roomHistory.avgHumRate);
+      
+      // Live-Anpassung wenn Fenster offen
+      if (room.windowOpen && activeSession && activeSession.startHum) {
+          const diffMin = (Date.now() - activeSession.startTime) / 60000;
+          if (diffMin > 3) {
+              const deltaHum = activeSession.startHum - room.humidity;
+              const currentHumRate = deltaHum / diffMin;
+              
+              if (currentHumRate > 0) {
+                  const remainingHumDrop = Math.max(0, room.humidity - targetHum);
+                  const predictedRemaining = remainingHumDrop / currentHumRate;
+                  const trustFactor = Math.min(1.0, diffMin / 15);
+                  const totalPredicted = diffMin + predictedRemaining;
+                  humTargetMin = Math.ceil((humTargetMin * (1 - trustFactor)) + (totalPredicted * trustFactor));
+              }
+          }
+      }
+  }
+  
+  // Bestimme die längste benötigte Zeit
+  const maxTargetMin = Math.max(
+      totalTargetMin,
+      co2TargetMin || 0,
+      humTargetMin || 0
+  );
+
   // Temp Check
   if (room.temp < limits.tempMin) {
     score -= 20;
@@ -322,11 +381,15 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
       if (room.windowOpen && room.lastWindowOpen) {
           const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
           const openMin = diffMs / 60000;
-          const remaining = Math.ceil(totalTargetMin - openMin);
+          
+          // Verwende die gelernte Feuchtigkeits-Vorhersage wenn verfügbar
+          const effectiveTarget = humTargetMin !== null ? humTargetMin : totalTargetMin;
+          const remaining = Math.ceil(effectiveTarget - openMin);
           
           if (remaining > 0) {
              let msg = `Noch ${remaining} Min.`;
-             if (isAdaptive) msg += " (Smart)";
+             if (humTargetMin !== null) msg += " (Gelernt: Feuchte)";
+             else if (isAdaptive) msg += " (Smart)";
              else if (learnedFactor !== 1.0) msg += " (Gelernt)";
              
              recommendations.push(msg);
@@ -339,7 +402,11 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
              recommendations.push(`Fenster schließen.`);
           }
       } else {
-          recommendations.push(`Lüften: ${ventDurationText}`);
+          let ventMsg = `Lüften: ${ventDurationText}`;
+          if (humTargetMin !== null && humTargetMin > totalTargetMin) {
+              ventMsg = `Lüften: ${humTargetMin} Min (Gelernt: Feuchte)`;
+          }
+          recommendations.push(ventMsg);
       }
     } else {
       recommendations.push('Lüften ineffektiv (Draußen zu feucht)');
@@ -354,10 +421,22 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
        if (room.windowOpen && room.lastWindowOpen) {
           const diffMs = Date.now() - new Date(room.lastWindowOpen).getTime();
           const openMin = diffMs / 60000;
-          const remaining = Math.ceil(totalTargetMin - openMin);
-          recommendations.push(remaining > 0 ? `CO2: Noch ${remaining} Min.` : `Luft gut. Schließen.`);
+          
+          // Verwende die gelernte CO2-Vorhersage wenn verfügbar
+          const effectiveTarget = co2TargetMin !== null ? co2TargetMin : totalTargetMin;
+          const remaining = Math.ceil(effectiveTarget - openMin);
+          
+          let msg = remaining > 0 ? `CO2: Noch ${remaining} Min.` : `Luft gut. Schließen.`;
+          if (remaining > 0 && co2TargetMin !== null) {
+              msg = `CO2: Noch ${remaining} Min. (Gelernt)`;
+          }
+          recommendations.push(msg);
        } else {
-          recommendations.push(`Stoßlüften (${ventDurationText})`);
+          let ventMsg = `Stoßlüften (${ventDurationText})`;
+          if (co2TargetMin !== null && co2TargetMin > totalTargetMin) {
+              ventMsg = `Stoßlüften (${co2TargetMin} Min, Gelernt: CO2)`;
+          }
+          recommendations.push(ventMsg);
        }
   }
 
@@ -372,6 +451,9 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
     dewPoint: dewPointInside.toFixed(1),
     isCrossVentilating,
     totalTargetMin,
+    co2TargetMin,
+    humTargetMin,
+    maxTargetMin,
     isNight,
     isAdaptive,
     learnedFactor
@@ -404,31 +486,74 @@ const useHomeAssistant = () => {
   useEffect(() => { localStorage.setItem('activeSessions', JSON.stringify(activeSessions)); }, [activeSessions]);
   useEffect(() => { localStorage.setItem('smartLearning', JSON.stringify(smartLearning)); }, [smartLearning]);
 
-  const updateLearning = (roomId, session) => {
+  const updateLearning = (roomId, session, endData) => {
       const durationMin = (Date.now() - session.startTime) / 60000;
       if (durationMin < 5) return; // Zu kurz zum Lernen
 
       const startTemp = session.startTemp;
-      const endTemp = rooms.find(r => r.id === roomId)?.temp || startTemp;
+      const endTemp = endData.temp || startTemp;
       
-      const rate = (startTemp - endTemp) / durationMin; // Grad pro Minute
+      const tempRate = (startTemp - endTemp) / durationMin; // Grad pro Minute
       
-      if (rate <= 0) return; // Erwärmung oder keine Änderung ignorieren wir erst mal
+      // CO2 Rate berechnen (wenn vorhanden)
+      let co2Rate = null;
+      if (session.startCo2 !== null && endData.co2 !== null) {
+          co2Rate = (session.startCo2 - endData.co2) / durationMin; // ppm pro Minute
+      }
+      
+      // Feuchtigkeits-Rate berechnen
+      const startHum = session.startHum;
+      const endHum = endData.humidity || startHum;
+      const humRate = (startHum - endHum) / durationMin; // % pro Minute
+
+      // Nur positive Änderungen lernen (Abkühlungen, CO2-Reduktion, Entfeuchtung)
+      if (tempRate <= 0 && (co2Rate === null || co2Rate <= 0) && humRate <= 0) {
+          return; // Keine positive Veränderung
+      }
 
       setSmartLearning(prev => {
-          const currentStats = prev[roomId] || { samples: 0, avgTempRate: 0 };
+          const currentStats = prev[roomId] || { 
+              samples: 0, 
+              avgTempRate: 0,
+              avgCo2Rate: 0,
+              avgHumRate: 0
+          };
           
           // Gleitender Durchschnitt (neu gewichtet mit 20%)
-          const newAvg = currentStats.samples === 0 
-              ? rate 
-              : (currentStats.avgTempRate * 0.8) + (rate * 0.2);
+          const newAvgTemp = tempRate > 0 ? (
+              currentStats.samples === 0 
+                  ? tempRate 
+                  : (currentStats.avgTempRate * 0.8) + (tempRate * 0.2)
+          ) : currentStats.avgTempRate;
+          
+          const newAvgCo2 = co2Rate !== null && co2Rate > 0 ? (
+              currentStats.samples === 0 || !currentStats.avgCo2Rate
+                  ? co2Rate 
+                  : (currentStats.avgCo2Rate * 0.8) + (co2Rate * 0.2)
+          ) : (currentStats.avgCo2Rate || 0);
+          
+          const newAvgHum = humRate > 0 ? (
+              currentStats.samples === 0 || !currentStats.avgHumRate
+                  ? humRate 
+                  : (currentStats.avgHumRate * 0.8) + (humRate * 0.2)
+          ) : (currentStats.avgHumRate || 0);
           
           return {
               ...prev,
               [roomId]: {
                   samples: currentStats.samples + 1,
-                  avgTempRate: newAvg,
-                  lastUpdate: Date.now()
+                  avgTempRate: newAvgTemp,
+                  avgCo2Rate: newAvgCo2,
+                  avgHumRate: newAvgHum,
+                  lastUpdate: Date.now(),
+                  lastSession: {
+                      duration: durationMin,
+                      tempDrop: startTemp - endTemp,
+                      co2Drop: session.startCo2 !== null && endData.co2 !== null ? session.startCo2 - endData.co2 : null,
+                      humDrop: startHum - endHum,
+                      outsideTemp: session.outsideTemp,
+                      outsideHum: session.outsideHum
+                  }
               }
           };
       });
@@ -494,12 +619,16 @@ const useHomeAssistant = () => {
           
           // Fenster ging AUF
           if (wOpen && !room.windowOpen) {
+              const currentCo2 = room.hasCo2 ? (getNum(map.co2) || room.co2) : null;
               setActiveSessions(prev => ({
                   ...prev,
                   [sessionKey]: {
                       startTime: Date.now(), // Wir nehmen unsere eigene Zeit, da präziser für Differenz
                       startTemp: currentTemp,
-                      startHum: currentHum
+                      startHum: currentHum,
+                      startCo2: currentCo2,
+                      outsideTemp: outside.temp,
+                      outsideHum: outside.humidity
                   }
               }));
           }
@@ -507,7 +636,13 @@ const useHomeAssistant = () => {
           else if (!wOpen && room.windowOpen) {
               const session = activeSessions[sessionKey];
               if (session) {
-                  updateLearning(room.id, session); // LERNEN!
+                  const currentCo2 = room.hasCo2 ? (getNum(map.co2) || room.co2) : null;
+                  const endData = {
+                      temp: currentTemp,
+                      humidity: currentHum,
+                      co2: currentCo2
+                  };
+                  updateLearning(room.id, session, endData); // LERNEN!
                   
                   // Session cleanup
                   setActiveSessions(prev => {
