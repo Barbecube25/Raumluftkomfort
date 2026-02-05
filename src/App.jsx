@@ -88,6 +88,15 @@ const ROOM_CONNECTIONS = {
 // Räume, die durch die Klimaanlage im Bad gekühlt werden können
 const AC_CONNECTED_ROOMS = ['bath', 'living', 'dining', 'kitchen'];
 
+// --- LEARNING SYSTEM KONFIGURATION ---
+const TARGET_CO2_PPM = 800; // Ziel-CO2-Wert in ppm
+const HUMIDITY_TARGET_OFFSET = 5; // Offset unter humMax für Feuchtigkeits-Ziel
+const LIVE_ANALYSIS_MIN_DURATION = 3; // Minuten bevor Live-Analyse startet
+const FULL_TRUST_DURATION_MIN = 15; // Minuten für volles Vertrauen in Live-Messung
+const MIN_LEARNING_DURATION_MIN = 5; // Minimale Session-Dauer für Lernen
+const HISTORICAL_WEIGHT = 0.8; // Gewichtung historischer Daten im gleitenden Durchschnitt
+const NEW_DATA_WEIGHT = 0.2; // Gewichtung neuer Daten im gleitenden Durchschnitt
+
 const SENSOR_MAPPING = {
   living: { 
     temp: 'sensor.smart_radiator_thermostat_x_temperatur', 
@@ -245,8 +254,8 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
   if (room.windowOpen && activeSession && activeSession.startTemp) {
       const diffMin = (Date.now() - activeSession.startTime) / 60000;
       
-      // Nur adaptieren, wenn wir schon > 3 Min offen haben, um Rauschen zu vermeiden
-      if (diffMin > 3) {
+      // Nur adaptieren, wenn wir schon genug Zeit haben, um Rauschen zu vermeiden
+      if (diffMin > LIVE_ANALYSIS_MIN_DURATION) {
           const deltaTemp = activeSession.startTemp - room.temp; // Positive means cooling
           const currentRate = deltaTemp / diffMin; // Grad pro Minute
 
@@ -263,7 +272,7 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
               
               // Wir mischen den vorhergesagten Wert mit dem Basiswert für Stabilität
               // Je länger wir offen haben, desto mehr vertrauen wir dem Live-Wert
-              const trustFactor = Math.min(1.0, diffMin / 15); 
+              const trustFactor = Math.min(1.0, diffMin / FULL_TRUST_DURATION_MIN); 
               
               // Die "bisher vergangene Zeit" muss natürlich zur "restlichen Zeit" addiert werden für die Gesamtdauer
               const totalPredicted = diffMin + predictedRemaining;
@@ -286,21 +295,20 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
   
   // CO2-basierte Vorhersage
   if (room.hasCo2 && room.co2 > 1000 && roomHistory && roomHistory.avgCo2Rate > 0) {
-      const targetCo2 = 800; // Ziel-CO2-Wert
-      const co2ToReduce = Math.max(0, room.co2 - targetCo2);
+      const co2ToReduce = Math.max(0, room.co2 - TARGET_CO2_PPM);
       co2TargetMin = Math.ceil(co2ToReduce / roomHistory.avgCo2Rate);
       
       // Live-Anpassung wenn Fenster offen
       if (room.windowOpen && activeSession && activeSession.startCo2) {
           const diffMin = (Date.now() - activeSession.startTime) / 60000;
-          if (diffMin > 3) {
+          if (diffMin > LIVE_ANALYSIS_MIN_DURATION) {
               const deltaCo2 = activeSession.startCo2 - room.co2;
               const currentCo2Rate = deltaCo2 / diffMin;
               
               if (currentCo2Rate > 0) {
-                  const remainingCo2Drop = Math.max(0, room.co2 - targetCo2);
+                  const remainingCo2Drop = Math.max(0, room.co2 - TARGET_CO2_PPM);
                   const predictedRemaining = remainingCo2Drop / currentCo2Rate;
-                  const trustFactor = Math.min(1.0, diffMin / 15);
+                  const trustFactor = Math.min(1.0, diffMin / FULL_TRUST_DURATION_MIN);
                   const totalPredicted = diffMin + predictedRemaining;
                   co2TargetMin = Math.ceil((co2TargetMin * (1 - trustFactor)) + (totalPredicted * trustFactor));
               }
@@ -310,21 +318,21 @@ const analyzeRoom = (room, outside, settings, allRooms, extensions = {}, activeS
   
   // Feuchtigkeits-basierte Vorhersage
   if (room.humidity > limits.humMax && roomHistory && roomHistory.avgHumRate > 0) {
-      const targetHum = limits.humMax - 5; // Ziel: etwas unter Maximum
+      const targetHum = limits.humMax - HUMIDITY_TARGET_OFFSET;
       const humToReduce = Math.max(0, room.humidity - targetHum);
       humTargetMin = Math.ceil(humToReduce / roomHistory.avgHumRate);
       
       // Live-Anpassung wenn Fenster offen
       if (room.windowOpen && activeSession && activeSession.startHum) {
           const diffMin = (Date.now() - activeSession.startTime) / 60000;
-          if (diffMin > 3) {
+          if (diffMin > LIVE_ANALYSIS_MIN_DURATION) {
               const deltaHum = activeSession.startHum - room.humidity;
               const currentHumRate = deltaHum / diffMin;
               
               if (currentHumRate > 0) {
                   const remainingHumDrop = Math.max(0, room.humidity - targetHum);
                   const predictedRemaining = remainingHumDrop / currentHumRate;
-                  const trustFactor = Math.min(1.0, diffMin / 15);
+                  const trustFactor = Math.min(1.0, diffMin / FULL_TRUST_DURATION_MIN);
                   const totalPredicted = diffMin + predictedRemaining;
                   humTargetMin = Math.ceil((humTargetMin * (1 - trustFactor)) + (totalPredicted * trustFactor));
               }
@@ -488,7 +496,7 @@ const useHomeAssistant = () => {
 
   const updateLearning = (roomId, session, endData) => {
       const durationMin = (Date.now() - session.startTime) / 60000;
-      if (durationMin < 5) return; // Zu kurz zum Lernen
+      if (durationMin < MIN_LEARNING_DURATION_MIN) return; // Zu kurz zum Lernen
 
       const startTemp = session.startTemp;
       const endTemp = endData.temp || startTemp;
@@ -519,23 +527,23 @@ const useHomeAssistant = () => {
               avgHumRate: 0
           };
           
-          // Gleitender Durchschnitt (neu gewichtet mit 20%)
+          // Gleitender Durchschnitt mit konfigurierten Gewichtungen
           const newAvgTemp = tempRate > 0 ? (
               currentStats.samples === 0 
                   ? tempRate 
-                  : (currentStats.avgTempRate * 0.8) + (tempRate * 0.2)
+                  : (currentStats.avgTempRate * HISTORICAL_WEIGHT) + (tempRate * NEW_DATA_WEIGHT)
           ) : currentStats.avgTempRate;
           
           const newAvgCo2 = co2Rate !== null && co2Rate > 0 ? (
               currentStats.samples === 0 || !currentStats.avgCo2Rate
                   ? co2Rate 
-                  : (currentStats.avgCo2Rate * 0.8) + (co2Rate * 0.2)
+                  : (currentStats.avgCo2Rate * HISTORICAL_WEIGHT) + (co2Rate * NEW_DATA_WEIGHT)
           ) : (currentStats.avgCo2Rate || 0);
           
           const newAvgHum = humRate > 0 ? (
               currentStats.samples === 0 || !currentStats.avgHumRate
                   ? humRate 
-                  : (currentStats.avgHumRate * 0.8) + (humRate * 0.2)
+                  : (currentStats.avgHumRate * HISTORICAL_WEIGHT) + (humRate * NEW_DATA_WEIGHT)
           ) : (currentStats.avgHumRate || 0);
           
           return {
